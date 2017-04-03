@@ -1,0 +1,80 @@
+---
+title: "GFW and Human Rights"
+output: html_notebook
+---
+# Introduction
+The project aims to address to research questions relating to human rights violations and fisheries:  
+
+1. Can GFW be used to detect human rights violations in fisheries?
+2. Do human rights violations, particularly forced labor, drive overfishing?
+
+## Load libraries
+
+```{r load_libraries}
+library(lubridate)
+library(tidyverse)
+library(bigrquery)
+library(plotly)
+```
+
+## Load GFW data
+
+```{r GFWdata}
+sql <-  paste("SELECT
+    mmsi,
+    flag_country_name,
+    YEAR(timestamp) Year,
+    SUM(hours) total_hours_fished,
+    COUNT(DISTINCT DATE(timestamp)) number_days_fishing
+  FROM
+    all_fishing_effort.all_fishing_effort_all_years
+  WHERE
+    flag_country_name = 'Thailand'
+  AND
+    measure_new_score >=.5
+  AND
+    NOT (distance_from_shore < 1000 AND implied_speed < 1)
+  GROUP BY
+    flag_country_name,
+    mmsi,
+    Year",
+  sep="")
+
+project <-  "ucsb-gfw"
+thai_effort <- query_exec(sql,project,max_pages = Inf)
+
+thai_effort_processed <- thai_effort %>%
+  arrange(-total_hours_fished) %>%
+  mutate(hours_per_day = total_hours_fished / number_days_fishing)
+
+vessel_list <- data.frame(mmsi = unique(thai_effort$mmsi))
+
+sql_vessels <-  paste("SELECT
+  mmsi,
+  country,
+  general_vessel_type,
+  length
+FROM
+  Vessel_Characteristics.complete_fishing_fleet_characteristics_2015",
+sep="")
+    
+project <-  "ucsb-gfw"
+vessel_characteristics <- query_exec(sql_vessels,project,max_pages = Inf)
+
+thai_effort_processed <- thai_effort_processed %>%
+  left_join(vessel_characteristics,by="mmsi")
+
+thai_effort_processed %>%
+  ggplot(aes(x=total_hours_fished)) +
+  geom_histogram()
+
+thai_effort_processed %>%
+  ggplot(aes(x=number_days_fishing)) +
+  geom_histogram() +
+  facet_wrap(~Year,scales="free_y")
+
+thai_effort_processed %>%
+  ggplot(aes(x=hours_per_day)) +
+  geom_histogram() +
+  facet_wrap(~Year,scales="free_y")
+```
