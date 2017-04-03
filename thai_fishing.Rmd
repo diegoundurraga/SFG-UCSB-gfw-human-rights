@@ -78,3 +78,61 @@ thai_effort_processed %>%
   geom_histogram() +
   facet_wrap(~Year,scales="free_y")
 ```
+
+```{r}
+sql <-  paste("SELECT
+    mmsi,
+    flag_country_name,
+    YEAR(timestamp) Year,
+    COUNT(DISTINCT(timestamp)) number_fishing_pings
+  FROM
+    all_fishing_effort.all_fishing_effort_all_years
+  WHERE
+    flag_country_name = 'Thailand'
+  AND
+    measure_new_score >=.5
+  AND
+    NOT (distance_from_shore < 1000 AND implied_speed < 1)
+  GROUP BY
+    flag_country_name,
+    mmsi,
+    Year",
+  sep="")
+
+project <-  "ucsb-gfw"
+thai_fishing_pings <- query_exec(sql,project,max_pages = Inf)
+
+sql <-  paste("SELECT
+    mmsi,
+    flag_country_name,
+    YEAR(timestamp) Year,
+    COUNT(DISTINCT(timestamp)) number_observation_pings
+  FROM
+    all_fishing_effort.all_fishing_effort_all_years
+  WHERE
+    flag_country_name = 'Thailand'
+  GROUP BY
+    flag_country_name,
+    mmsi,
+    Year",
+  sep="")
+
+project <-  "ucsb-gfw"
+thai_observation_pings <- query_exec(sql,project,max_pages = Inf)
+
+allPings <- thai_observation_pings %>%
+  left_join(thai_fishing_pings)  %>%
+  as_tibble() %>%
+  mutate(number_fishing_pings=replace(number_fishing_pings, is.na(number_fishing_pings), 0)) %>%
+  mutate(ping_ratio = number_fishing_pings/number_observation_pings) %>%
+  arrange(-ping_ratio)
+
+allPings %>%
+  ggplot(aes(x=number_observation_pings,y=number_fishing_pings)) +
+  geom_point()
+
+allPings %>%
+  ggplot(aes(x=ping_ratio)) +
+  geom_histogram()
+```
+
