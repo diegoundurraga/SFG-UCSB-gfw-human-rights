@@ -73,35 +73,37 @@ thai_effort_processed <- vesselQueryAll %>%
   ungroup() %>%
   group_by(mmsi,Year) %>%
   summarize(total_hours_fished = sum(hours*Fishing),
-            number_days_pinged = n_distinct(Date),
+            Annual_Active_Days = n_distinct(Date),
             number_days_fishing = n_distinct(Date[Fishing==1]),
             number_days_transit = n_distinct(Date[Fishing==0]),
             hours_per_day = total_hours_fished / number_days_fishing,
             number_fishing_pings = sum(Fishing),
             number_observation_pings = n(),
             ping_ratio = number_fishing_pings/number_observation_pings,
-            day_ratio = number_days_fishing/number_days_pinged) %>%
+            day_ratio = number_days_fishing/Annual_Active_Days) %>%
   left_join(vessel_characteristics,by="mmsi") %>%
-    arrange(-number_days_fishing)
+    arrange(-total_hours_fished)
 
 thai_effort_processed %>%
-  plot_ly(x=~number_days_fishing,type="histogram",text=~mmsi) %>%
+  plot_ly(x=~total_hours_fished,type="histogram",text=~mmsi) %>%
   layout(barmode = "overlay")
 
-modelFit <- lm(number_days_fishing~number_days_transit+0,thai_effort_processed,offset=rep(0, nrow(thai_effort_processed)))
+modelFit <- lm(total_hours_fished~number_days_fishing+0,thai_effort_processed,offset=rep(0, nrow(thai_effort_processed)))
 slope <- tidy(modelFit)$estimate
 thai_effort_processed %>%
-  plot_ly(x= ~number_days_transit, y =~number_days_fishing,
+  plot_ly(x= ~number_days_fishing, y =~total_hours_fished,
           mode="scatter") %>%
-  add_markers(size=~number_days_pinged,
-              color=~number_days_pinged,
+  add_markers(size=~Annual_Active_Days,
+              color=~Annual_Active_Days,
               text = ~paste('Vessel: ', mmsi,
                             '<br>Year: ',Year,
                             '<br>Annual Hours Fished: ',round(total_hours_fished),
-                            '<br>Annual Days Fishing: ',round(number_days_fishing),
-                            '<br>Annual Days Pinged: ',round(number_days_pinged))) %>%
-  add_trace(x = c(0, max(thai_effort_processed$number_days_transit)), 
-            y = c(0, slope*max(thai_effort_processed$number_days_transit)),mode="lines")
+                            '<br>Annual Days Fished: ',round(number_days_fishing),
+                            '<br>Annual Days Active: ',round(Annual_Active_Days)),
+              name = "Individual Vessels") %>%
+  add_trace(x = c(0, max(thai_effort_processed$number_days_fishing)), 
+            y = c(0, slope*max(thai_effort_processed$number_days_fishing)),mode="lines",name="Linear Model Fit") %>%
+  layout(xaxis = list(title = "Annual Days Fished"),yaxis = list(title = "Annual Hours Fished"))
 ```
 
 ```{r}
@@ -116,8 +118,8 @@ world <- readOGR(dsn = "data/TM_WORLD_BORDERS-0.3", layer = "TM_WORLD_BORDERS-0.
 
 
 ```{r}
-vesselNumber <- 567109193
-yearPlot <- 2016
+vesselNumber <- 567435897
+yearPlot <- 2013
 
 fishingPoints <- vesselQueryAll %>%
   filter(mmsi == vesselNumber) %>%
