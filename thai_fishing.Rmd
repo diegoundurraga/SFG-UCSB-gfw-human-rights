@@ -15,39 +15,33 @@ library(lubridate)
 library(tidyverse)
 library(bigrquery)
 library(plotly)
+library(broom)
 ```
 
 ## Load GFW data
-
-```{r GFWdata}
+```{r}
+## Get all Thailand GFW Data
+requery <- "no"
+if (requery == "yes"){
 sql <-  paste("SELECT
-    mmsi,
-    flag_country_name,
-    YEAR(timestamp) Year,
-    SUM(hours) total_hours_fished,
-    COUNT(DISTINCT DATE(timestamp)) number_days_fishing
+    year,
+    mmsi, 
+    timestamp, 
+    lon, 
+    lat, 
+    hours, 
+    measure_new_score, 
+    distance_from_shore, 
+    implied_speed, 
+    eez_name
   FROM
     all_fishing_effort.all_fishing_effort_all_years
   WHERE
-    flag_country_name = 'Thailand'
-  AND
-    measure_new_score >=.5
-  AND
-    NOT (distance_from_shore < 1000 AND implied_speed < 1)
-  GROUP BY
-    flag_country_name,
-    mmsi,
-    Year",
+    flag_country_name = 'Thailand'",
   sep="")
 
 project <-  "ucsb-gfw"
-thai_effort <- query_exec(sql,project,max_pages = Inf)
-
-thai_effort_processed <- thai_effort %>%
-  arrange(-total_hours_fished) %>%
-  mutate(hours_per_day = total_hours_fished / number_days_fishing)
-
-vessel_list <- data.frame(mmsi = unique(thai_effort$mmsi))
+vesselQueryAll <- query_exec(sql,project,max_pages = Inf)
 
 sql_vessels <-  paste("SELECT
   mmsi,
@@ -61,78 +55,153 @@ sep="")
 project <-  "ucsb-gfw"
 vessel_characteristics <- query_exec(sql_vessels,project,max_pages = Inf)
 
-thai_effort_processed <- thai_effort_processed %>%
-  left_join(vessel_characteristics,by="mmsi")
+save(vesselQueryAll,file="data/vesselQueryAll.Rdata")
+save(vessel_characteristics,file="data/vessel_characteristics.Rdata")
+} else {
+  load("data/vesselQueryAll.Rdata")
+  load("data/vessel_characteristics.Rdata")
+}
+```
+
+```{r GFWdata}
+thai_effort_processed <- vesselQueryAll %>%
+  rename(Year = year) %>%
+  mutate(Date = date(timestamp)) %>%
+  mutate(Fishing = ifelse(measure_new_score >= 0.5 & 
+                            !((distance_from_shore < 1000 & implied_speed < 1)),1,0)) %>%
+  group_by(Date,Year,mmsi,Fishing) %>%
+  ungroup() %>%
+  group_by(mmsi,Year) %>%
+  summarize(total_hours_fished = sum(hours*Fishing),
+            number_days_pinged = n_distinct(Date),
+            number_days_fishing = n_distinct(Date[Fishing==1]),
+            number_days_transit = n_distinct(Date[Fishing==0]),
+            hours_per_day = total_hours_fished / number_days_fishing,
+            number_fishing_pings = sum(Fishing),
+            number_observation_pings = n(),
+            ping_ratio = number_fishing_pings/number_observation_pings,
+            day_ratio = number_days_fishing/number_days_pinged) %>%
+  left_join(vessel_characteristics,by="mmsi") %>%
+    arrange(-number_days_fishing)
 
 thai_effort_processed %>%
-  ggplot(aes(x=total_hours_fished)) +
-  geom_histogram()
+  plot_ly(x=~number_days_fishing,type="histogram",text=~mmsi) %>%
+  layout(barmode = "overlay")
 
+modelFit <- lm(number_days_fishing~number_days_transit+0,thai_effort_processed,offset=rep(0, nrow(thai_effort_processed)))
+slope <- tidy(modelFit)$estimate
 thai_effort_processed %>%
-  ggplot(aes(x=number_days_fishing)) +
-  geom_histogram() +
-  facet_wrap(~Year,scales="free_y")
-
-thai_effort_processed %>%
-  ggplot(aes(x=hours_per_day)) +
-  geom_histogram() +
-  facet_wrap(~Year,scales="free_y")
+  plot_ly(x= ~number_days_transit, y =~number_days_fishing,
+          mode="scatter") %>%
+  add_markers(size=~number_days_pinged,
+              color=~number_days_pinged,
+              text = ~paste('Vessel: ', mmsi,
+                            '<br>Year: ',Year,
+                            '<br>Annual Hours Fished: ',round(total_hours_fished),
+                            '<br>Annual Days Fishing: ',round(number_days_fishing),
+                            '<br>Annual Days Pinged: ',round(number_days_pinged))) %>%
+  add_trace(x = c(0, max(thai_effort_processed$number_days_transit)), 
+            y = c(0, slope*max(thai_effort_processed$number_days_transit)),mode="lines")
 ```
 
 ```{r}
-sql <-  paste("SELECT
-    mmsi,
-    flag_country_name,
-    YEAR(timestamp) Year,
-    COUNT(DISTINCT(timestamp)) number_fishing_pings
-  FROM
-    all_fishing_effort.all_fishing_effort_all_years
-  WHERE
-    flag_country_name = 'Thailand'
-  AND
-    measure_new_score >=.5
-  AND
-    NOT (distance_from_shore < 1000 AND implied_speed < 1)
-  GROUP BY
-    flag_country_name,
-    mmsi,
-    Year",
-  sep="")
+library(tmap)
+library(rgdal)
+library(sp)
+library(leaflet)
+eez <- readOGR(dsn = "data/World_EEZ_v9_20161021_LR", layer = "eez_lr", stringsAsFactors = FALSE)
+eez@data$GeoName <- gsub(" Exclusive Economic Zone"," EEZ",eez@data$GeoName)
+world <- readOGR(dsn = "data/TM_WORLD_BORDERS-0.3", layer = "TM_WORLD_BORDERS-0.3", stringsAsFactors = FALSE)
+```
 
-project <-  "ucsb-gfw"
-thai_fishing_pings <- query_exec(sql,project,max_pages = Inf)
 
-sql <-  paste("SELECT
-    mmsi,
-    flag_country_name,
-    YEAR(timestamp) Year,
-    COUNT(DISTINCT(timestamp)) number_observation_pings
-  FROM
-    all_fishing_effort.all_fishing_effort_all_years
-  WHERE
-    flag_country_name = 'Thailand'
-  GROUP BY
-    flag_country_name,
-    mmsi,
-    Year",
-  sep="")
+```{r}
+vesselNumber <- 567109193
+yearPlot <- 2016
 
-project <-  "ucsb-gfw"
-thai_observation_pings <- query_exec(sql,project,max_pages = Inf)
+fishingPoints <- vesselQueryAll %>%
+  filter(mmsi == vesselNumber) %>%
+  filter(measure_new_score >= 0.5) %>%
+  filter(year == yearPlot) %>%
+  filter(!(distance_from_shore < 1000 & implied_speed < 1)) %>%
+  select(lon,
+         lat) %>%
+  SpatialPoints()
 
-allPings <- thai_observation_pings %>%
-  left_join(thai_fishing_pings)  %>%
-  as_tibble() %>%
-  mutate(number_fishing_pings=replace(number_fishing_pings, is.na(number_fishing_pings), 0)) %>%
-  mutate(ping_ratio = number_fishing_pings/number_observation_pings) %>%
-  arrange(-ping_ratio)
+transitPoints <- vesselQueryAll %>%
+  filter(mmsi == vesselNumber) %>%
+  filter(measure_new_score < 0.5 & !(distance_from_shore < 1000 & implied_speed < 1)) %>%
+  filter(year == yearPlot) %>%
+  select(lon,
+         lat) %>%
+  SpatialPoints()
 
-allPings %>%
-  ggplot(aes(x=number_observation_pings,y=number_fishing_pings)) +
-  geom_point()
+portPoints <- vesselQueryAll %>%
+  filter(mmsi == vesselNumber) %>%
+  filter(year == yearPlot & (distance_from_shore < 1000 & implied_speed < 1)) %>%
+  select(lon,
+         lat) %>%
+  SpatialPoints()
 
-allPings %>%
-  ggplot(aes(x=ping_ratio)) +
-  geom_histogram()
+eezOverlap <- overlay<-raster::intersect(eez,
+                                         rbind(fishingPoints,
+                              transitPoints,
+                              portPoints))
+
+extentPoints <- rbind(fishingPoints,
+                              transitPoints,
+                              portPoints) %>%
+  bbox()
+
+
+# qtm(world,
+#          bbox = extentPoints, title=paste("Vessel: ",vesselNumber,"\nYear: ",yearPlot),style="cobalt") +
+#   tm_borders() +
+#    tm_shape(fishingPoints) +
+#   tm_dots(col="red") +
+#   tm_shape(transitPoints) +
+#   tm_dots(col="blue") +
+#   tm_shape(portPoints) +
+#   tm_dots(col="green") +
+#   tm_shape(eezOverlap) +
+#   tm_borders(col="orange") +
+#   tm_text("GeoName",size=1) +
+#   tm_add_legend(type="symbol",labels=c("Transit","Fishing","Port"),col=c("blue","red","green"),shape=16,size=0.25)
+
+leaflet() %>%
+  # fitBounds(0, 60, 35, 72) %>%
+  addTiles(group = "OSM (default)") %>%
+  addPolygons(data = eez,
+    fillOpacity = 0.15, 
+    fillColor = "blue", 
+    stroke=TRUE,
+    weight=1,
+    color="black",
+    popup = ~paste0("<font color=#000000>",
+      "<b>EEZ: </b>", GeoName, "<br>",
+    "</font>"))  %>%
+  addCircleMarkers(data=fishingPoints,
+              color="red",
+              stroke=FALSE,
+              fillOpacity = 0.5,
+              radius = 3,
+              group = "Fishing")  %>%
+  addCircleMarkers(data=transitPoints,
+              color="blue",
+              stroke=FALSE,
+              fillOpacity = 0.5,
+              radius = 3,
+              group = "Transit")  %>%
+  addCircleMarkers(data=portPoints,
+              color="green",
+              stroke=FALSE,
+              fillOpacity = 0.5,
+              radius = 3,
+              group = "Port") %>%
+  fitBounds(lng1=extentPoints[1],lat1=extentPoints[2],lng2=extentPoints[3],lat2=extentPoints[4]) %>%
+  addLayersControl(
+    overlayGroups = c("Fishing", "Transit","Port"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
 ```
 
