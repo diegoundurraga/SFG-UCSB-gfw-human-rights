@@ -82,11 +82,15 @@ thai_effort_processed <- vesselQueryAll %>%
             ping_ratio = number_fishing_pings/number_observation_pings,
             day_ratio = number_days_fishing/Annual_Active_Days) %>%
   left_join(vessel_characteristics,by="mmsi") %>%
-    arrange(-total_hours_fished)
+    arrange(-hours_per_day)
 
 thai_effort_processed %>%
   plot_ly(x=~total_hours_fished,type="histogram",text=~mmsi) %>%
   layout(barmode = "overlay")
+
+knownOffenders <- thai_effort_processed %>%
+  filter(mmsi %in% c(567000445,567000421,567025800)) %>%
+  filter(Year == 2015)
 
 modelFit <- lm(total_hours_fished~number_days_fishing+0,thai_effort_processed,offset=rep(0, nrow(thai_effort_processed)))
 slope <- tidy(modelFit)$estimate
@@ -103,7 +107,17 @@ thai_effort_processed %>%
               name = "Individual Vessels") %>%
   add_trace(x = c(0, max(thai_effort_processed$number_days_fishing)), 
             y = c(0, slope*max(thai_effort_processed$number_days_fishing)),mode="lines",name="Linear Model Fit") %>%
-  layout(xaxis = list(title = "Annual Days Fished"),yaxis = list(title = "Annual Hours Fished"))
+  layout(xaxis = list(title = "Annual Days Fished"),yaxis = list(title = "Annual Hours Fished")) %>%
+  add_annotations(x = knownOffenders$number_days_fishing,
+                  y = knownOffenders$total_hours_fished,
+                  text = "Known suspect of<br>human trafficking",
+                  xref = "x",
+                  yref = "y",
+                  showarrow = TRUE,
+                  arrowhead = 4,
+                  arrowsize = .5,
+                  ax = c(-20,0,-40),
+                  ay = c(-40,-60,-40))
 ```
 
 ```{r}
@@ -118,8 +132,8 @@ world <- readOGR(dsn = "data/TM_WORLD_BORDERS-0.3", layer = "TM_WORLD_BORDERS-0.
 
 
 ```{r}
-vesselNumber <- 567435897
-yearPlot <- 2013
+vesselNumber <- 567334000
+yearPlot <- 2012
 
 fishingPoints <- vesselQueryAll %>%
   filter(mmsi == vesselNumber) %>%
@@ -182,27 +196,27 @@ leaflet() %>%
     popup = ~paste0("<font color=#000000>",
       "<b>EEZ: </b>", GeoName, "<br>",
     "</font>"))  %>%
-  addCircleMarkers(data=fishingPoints,
-              color="red",
-              stroke=FALSE,
-              fillOpacity = 0.5,
-              radius = 3,
-              group = "Fishing")  %>%
   addCircleMarkers(data=transitPoints,
               color="blue",
               stroke=FALSE,
               fillOpacity = 0.5,
               radius = 3,
-              group = "Transit")  %>%
+              group = "Transit (Blue)")  %>%
+  addCircleMarkers(data=fishingPoints,
+              color="red",
+              stroke=FALSE,
+              fillOpacity = 0.5,
+              radius = 3,
+              group = "Fishing (Red)")  %>%
   addCircleMarkers(data=portPoints,
               color="green",
               stroke=FALSE,
               fillOpacity = 0.5,
               radius = 3,
-              group = "Port") %>%
+              group = "Port (Green)") %>%
   fitBounds(lng1=extentPoints[1],lat1=extentPoints[2],lng2=extentPoints[3],lat2=extentPoints[4]) %>%
   addLayersControl(
-    overlayGroups = c("Fishing", "Transit","Port"),
+    overlayGroups = c("Fishing (Red)", "Transit (Blue)","Port (Green)"),
     options = layersControlOptions(collapsed = FALSE)
   )
 ```
