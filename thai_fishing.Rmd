@@ -82,6 +82,7 @@ thai_effort_processed <- vesselQueryAll %>%
             ping_ratio = number_fishing_pings/number_observation_pings,
             day_ratio = Annual_Days_Fishing/Annual_Active_Days) %>%
   left_join(vessel_characteristics,by="mmsi") %>%
+  filter(Annual_Days_Fishing > 0) %>%
     arrange(-hours_per_day)
 
 thai_effort_processed %>%
@@ -130,8 +131,40 @@ thai_effort_processed %>%
 ```
 
 ```{r}
-HRModel <- glm(Offender ~ hours_per_day + Annual_Active_Days +, data = thai_effort_processed, family = "binomial") %>%
-  tidy()
+HRModel <- glm(Offender ~ hours_per_day + Annual_Days_Fishing, data = thai_effort_processed, family = "binomial")
+offenderLikelihood <-predict(HRModel,list(hours_per_day = thai_effort_processed$hours_per_day,
+                                         Annual_Active_Days = thai_effort_processed$Annual_Active_Days),type="response") %>%
+  as.vector()
+
+thai_effort_processed$offenderLikelihood <- offenderLikelihood
+	
+markerColors = list(color = colorRampPalette(brewer.pal(11,"Spectral"))(100))
+
+thai_effort_processed %>%
+  plot_ly(x= ~Annual_Active_Days, y =~hours_per_day,
+          mode="scatter") %>%
+  add_markers(size=~offenderLikelihood,
+              color=~offenderLikelihood,
+              colors=c("black","red"),
+              text = ~paste('Vessel: ', mmsi,
+                            '<br>Year: ',Year,
+                            '<br>Annual hours fished: ',round(total_hours_fished),
+                            '<br>Annual days fished: ',round(Annual_Days_Fishing),
+                            '<br>Annual days at sea: ',round(Annual_Active_Days),
+                            '<br>Hours per day: ',round(hours_per_day,1),
+                            '<br>Offender likelihood: ',round(offenderLikelihood,2)),
+              name = "Individual Vessels") %>%
+  layout(title = "Thai Fishing Vessels: 2012 - 2016",xaxis = list(title = "Annual days at sea"),yaxis = list(title = "Hours fished per fishing day")) %>%
+  add_annotations(x = knownOffenders$Annual_Active_Days,
+                  y = knownOffenders$hours_per_day,
+                  text = "Known suspect of<br>human trafficking",
+                  xref = "x",
+                  yref = "y",
+                  showarrow = TRUE,
+                  arrowhead = 4,
+                  arrowsize = .5,
+                  ax = c(0,0,50),
+                  ay = c(-80,-80,-40))
 ```
 
 
