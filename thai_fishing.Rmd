@@ -16,6 +16,7 @@ library(tidyverse)
 library(bigrquery)
 library(plotly)
 library(broom)
+library(modelr)
 ```
 
 ## Load GFW data
@@ -69,8 +70,6 @@ thai_effort_processed <- vesselQueryAll %>%
   mutate(Date = date(timestamp)) %>%
   mutate(Fishing = ifelse(measure_new_score >= 0.5 & 
                             !((distance_from_shore < 1000 & implied_speed < 1)),1,0)) %>%
-  group_by(Date,Year,mmsi,Fishing) %>%
-  ungroup() %>%
   group_by(mmsi,Year) %>%
   summarize(total_hours_fished = sum(hours*Fishing),
             Annual_Active_Days = n_distinct(Date),
@@ -82,69 +81,84 @@ thai_effort_processed <- vesselQueryAll %>%
             ping_ratio = number_fishing_pings/number_observation_pings,
             day_ratio = Annual_Days_Fishing/Annual_Active_Days) %>%
   left_join(vessel_characteristics,by="mmsi") %>%
-  filter(Annual_Days_Fishing > 0) %>%
     arrange(-hours_per_day)
 
 thai_effort_processed %>%
   plot_ly(x=~total_hours_fished,type="histogram",text=~mmsi) %>%
   layout(barmode = "overlay")
 
+# knownOffenders <- thai_effort_processed %>%
+#   filter(mmsi %in% c(567000445,567000421,567025800)) %>%
+#   filter(Year == 2015) %>%
+#   mutate(Offender = 1)
+# 
+# thai_effort_processed <- thai_effort_processed %>%
+#   left_join(knownOffenders %>%
+#               select(mmsi,
+#                      Year,
+#                      Offender),
+#             by=c("mmsi","Year")) %>%
+#   mutate(Offender = replace(Offender,is.na(Offender)==TRUE,0))
+# 
+# modelFit <- lm(total_hours_fished~Annual_Active_Days+0,thai_effort_processed,offset=rep(0, nrow(thai_effort_processed)))
+# slope <- tidy(modelFit)$estimate
+# thai_effort_processed %>%
+#   plot_ly(x= ~Annual_Active_Days, y =~total_hours_fished,
+#           mode="scatter") %>%
+#   add_markers(size=~Annual_Days_Fishing,
+#               color=~Annual_Days_Fishing,
+#               text = ~paste('Vessel: ', mmsi,
+#                             '<br>Year: ',Year,
+#                             '<br>Annual Hours Fished: ',round(total_hours_fished),
+#                             '<br>Annual Days Fished: ',round(Annual_Days_Fishing),
+#                             '<br>Annual Days Active: ',round(Annual_Active_Days)),
+#               name = "Individual Vessels") %>%
+#   add_trace(x = c(0, max(thai_effort_processed$Annual_Active_Days)), 
+#             y = c(0, slope*max(thai_effort_processed$Annual_Active_Days)),mode="lines",name="Linear Model Fit") %>%
+#   layout(xaxis = list(title = "Annual Active Days"),yaxis = list(title = "Annual Hours Fished")) %>%
+#   add_annotations(x = knownOffenders$Annual_Active_Days,
+#                   y = knownOffenders$total_hours_fished,
+#                   text = "Known suspect of<br>human trafficking",
+#                   xref = "x",
+#                   yref = "y",
+#                   showarrow = TRUE,
+#                   arrowhead = 4,
+#                   arrowsize = .5,
+#                   ax = c(-20,-0,-100),
+#                   ay = c(-40,-60,-40))
+```
+
+```{r}
+# HRModel <- glm(Offender ~ hours_per_day + Annual_Active_Days, data = thai_effort_processed, family = "binomial")
+# offenderLikelihood <-predict(HRModel,list(hours_per_day = thai_effort_processed$hours_per_day,
+#                                          Annual_Active_Days = thai_effort_processed$Annual_Active_Days),type="response") %>%
+#   as.vector()
+# 
+# thai_effort_processed$Likelihood_of_Trafficking <- offenderLikelihood
+
+newModel <- lm(total_hours_fished ~ Annual_Active_Days, data = thai_effort_processed)
+
+thai_effort_processed <- thai_effort_processed %>%
+  add_predictions(newModel) %>%
+  add_residuals(newModel)
+
 knownOffenders <- thai_effort_processed %>%
   filter(mmsi %in% c(567000445,567000421,567025800)) %>%
   filter(Year == 2015) %>%
   mutate(Offender = 1)
 
-thai_effort_processed <- thai_effort_processed %>%
-  left_join(knownOffenders %>%
-              select(mmsi,
-                     Year,
-                     Offender),
-            by=c("mmsi","Year")) %>%
-  mutate(Offender = replace(Offender,is.na(Offender)==TRUE,0))
-
-modelFit <- lm(total_hours_fished~Annual_Active_Days+0,thai_effort_processed,offset=rep(0, nrow(thai_effort_processed)))
-slope <- tidy(modelFit)$estimate
-thai_effort_processed %>%
-  plot_ly(x= ~Annual_Active_Days, y =~total_hours_fished,
-          mode="scatter") %>%
-  add_markers(size=~Annual_Days_Fishing,
-              color=~Annual_Days_Fishing,
-              text = ~paste('Vessel: ', mmsi,
-                            '<br>Year: ',Year,
-                            '<br>Annual Hours Fished: ',round(total_hours_fished),
-                            '<br>Annual Days Fished: ',round(Annual_Days_Fishing),
-                            '<br>Annual Days Active: ',round(Annual_Active_Days)),
-              name = "Individual Vessels") %>%
-  add_trace(x = c(0, max(thai_effort_processed$Annual_Active_Days)), 
-            y = c(0, slope*max(thai_effort_processed$Annual_Active_Days)),mode="lines",name="Linear Model Fit") %>%
-  layout(xaxis = list(title = "Annual Active Days"),yaxis = list(title = "Annual Hours Fished")) %>%
-  add_annotations(x = knownOffenders$Annual_Active_Days,
-                  y = knownOffenders$total_hours_fished,
-                  text = "Known suspect of<br>human trafficking",
-                  xref = "x",
-                  yref = "y",
-                  showarrow = TRUE,
-                  arrowhead = 4,
-                  arrowsize = .5,
-                  ax = c(-20,-0,-100),
-                  ay = c(-40,-60,-40))
-```
-
-```{r}
-HRModel <- glm(Offender ~ hours_per_day + Annual_Days_Fishing, data = thai_effort_processed, family = "binomial")
-offenderLikelihood <-predict(HRModel,list(hours_per_day = thai_effort_processed$hours_per_day,
-                                         Annual_Active_Days = thai_effort_processed$Annual_Active_Days),type="response") %>%
-  as.vector()
-
-thai_effort_processed$offenderLikelihood <- offenderLikelihood
-	
-markerColors = list(color = colorRampPalette(brewer.pal(11,"Spectral"))(100))
+thai_effort_processed %>% 
+  ggplot(aes(x=pred,y=total_hours_fished)) +
+  geom_point() +
+  geom_abline(yintercept = 0, slope = 1,color="red") +
+  xlab("Predict annual hours fished/n[hrs/year]") +
+  ylab("Actual annual hours fished/n[hrs/year]")
 
 thai_effort_processed %>%
-  plot_ly(x= ~Annual_Active_Days, y =~hours_per_day,
+  plot_ly(x= ~pred, y =~total_hours_fished,
           mode="scatter") %>%
-  add_markers(size=~offenderLikelihood,
-              color=~offenderLikelihood,
+  add_markers(size=~Annual_Active_Days,
+              color=~Annual_Active_Days,
               colors=c("black","red"),
               text = ~paste('Vessel: ', mmsi,
                             '<br>Year: ',Year,
@@ -154,17 +168,45 @@ thai_effort_processed %>%
                             '<br>Hours per day: ',round(hours_per_day,1),
                             '<br>Offender likelihood: ',round(offenderLikelihood,2)),
               name = "Individual Vessels") %>%
-  layout(title = "Thai Fishing Vessels: 2012 - 2016",xaxis = list(title = "Annual days at sea"),yaxis = list(title = "Hours fished per fishing day")) %>%
-  add_annotations(x = knownOffenders$Annual_Active_Days,
-                  y = knownOffenders$hours_per_day,
+  layout(title = "Thai Fishing Vessels: 2012 - 2016",xaxis = list(title = "Predicted total annual fishing hours"),yaxis = list(title = "Actual total annual fishing hours")) %>%
+  add_annotations(x = knownOffenders$pred,
+                  y = knownOffenders$total_hours_fished,
                   text = "Known suspect of<br>human trafficking",
                   xref = "x",
                   yref = "y",
                   showarrow = TRUE,
                   arrowhead = 4,
                   arrowsize = .5,
-                  ax = c(0,0,50),
-                  ay = c(-80,-80,-40))
+                  ax = c(60,0,60),
+                  ay = c(-40,-80,-40))  %>%
+  add_trace(x = c(0, max(thai_effort_processed$pred)), 
+            y = c(0, max(thai_effort_processed$pred)),mode="lines",name="45 degree line")
+
+# thai_effort_processed %>%
+#   plot_ly(x= ~Annual_Active_Days, y =~hours_per_day,
+#           mode="scatter") %>%
+#   add_markers(size=~Likelihood_of_Trafficking,
+#               color=~Likelihood_of_Trafficking,
+#               colors=c("black","red"),
+#               text = ~paste('Vessel: ', mmsi,
+#                             '<br>Year: ',Year,
+#                             '<br>Annual hours fished: ',round(total_hours_fished),
+#                             '<br>Annual days fished: ',round(Annual_Days_Fishing),
+#                             '<br>Annual days at sea: ',round(Annual_Active_Days),
+#                             '<br>Hours per day: ',round(hours_per_day,1),
+#                             '<br>Offender likelihood: ',round(offenderLikelihood,2)),
+#               name = "Individual Vessels") %>%
+#   layout(title = "Thai Fishing Vessels: 2012 - 2016",xaxis = list(title = "Annual days at sea"),yaxis = list(title = "Hours fished per fishing day")) %>%
+#   add_annotations(x = knownOffenders$Annual_Active_Days,
+#                   y = knownOffenders$hours_per_day,
+#                   text = "Known suspect of<br>human trafficking",
+#                   xref = "x",
+#                   yref = "y",
+#                   showarrow = TRUE,
+#                   arrowhead = 4,
+#                   arrowsize = .5,
+#                   ax = c(0,0,50),
+#                   ay = c(-80,-80,-40))
 ```
 
 
@@ -267,5 +309,41 @@ leaflet() %>%
     overlayGroups = c("Fishing (Red)", "Transit (Blue)","Port (Green)"),
     options = layersControlOptions(collapsed = FALSE)
   )
+```
+
+```{r}
+## Get global GFW Data
+requery <- "no"
+if (requery == "yes"){
+  
+  GFW_connection <-  src_bigquery("ucsb-gfw", "all_fishing_effort", max_pages = Inf)
+  fao_file <- paste("all_fishing_effort_all_years")
+  
+  vesselQueryGlobal <- tbl(GFW_connection, from = fao_file) %>%
+    dplyr::select(timestamp, year, mmsi, flag_country_name, hours, measure_new_score, distance_from_shore, implied_speed) %>%
+    collect(n=Inf) %>%
+    rename(Year = year) %>%
+    mutate(Date = date(timestamp)) %>%
+    mutate(Fishing = ifelse(measure_new_score >= 0.5 & 
+                              !((distance_from_shore < 1000 & implied_speed < 1)),1,0)) %>%
+    group_by(mmsi, Year, flag_country_name) %>%
+    summarize(total_hours_fished = sum(hours*Fishing),
+              Annual_Active_Days = n_distinct(Date),
+              Annual_Days_Fishing = n_distinct(Date[Fishing==1]),
+              number_days_transit = n_distinct(Date[Fishing==0]),
+              hours_per_day = total_hours_fished / Annual_Days_Fishing,
+              number_fishing_pings = sum(Fishing),
+              number_observation_pings = n(),
+              ping_ratio = number_fishing_pings/number_observation_pings,
+              day_ratio = Annual_Days_Fishing/Annual_Active_Days)
+  
+save(vesselQueryGlobal,file="data/vesselQueryGlobal.Rdata")
+} else {
+  load("data/vesselQueryGlobal.Rdata")
+}
+
+global_effort_processed <- vesselQueryGlobal %>%
+  left_join(vessel_characteristics,by="mmsi")
+
 ```
 
