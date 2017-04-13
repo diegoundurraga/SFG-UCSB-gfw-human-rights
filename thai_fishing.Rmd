@@ -151,8 +151,8 @@ thai_effort_processed %>%
   ggplot(aes(x=pred,y=total_hours_fished)) +
   geom_point() +
   geom_abline(yintercept = 0, slope = 1,color="red") +
-  xlab("Predict annual hours fished/n[hrs/year]") +
-  ylab("Actual annual hours fished/n[hrs/year]")
+  xlab("Predicted annual hours fished\n[hrs/year]") +
+  ylab("Actual annual hours fished\n[hrs/year]")
 
 thai_effort_processed %>%
   plot_ly(x= ~pred, y =~total_hours_fished,
@@ -315,34 +315,109 @@ leaflet() %>%
 requery <- "no"
 if (requery == "yes"){
   
-  GFW_connection <-  src_bigquery("ucsb-gfw", "all_fishing_effort", max_pages = Inf)
-  fao_file <- paste("all_fishing_effort_all_years")
+  sql <- "
+  SELECT
+    YEAR(timestamp) year,
+    mmsi, 
+    flag_country_name,
+    CASE 
+      WHEN measure_new_score >=.5 AND NOT (distance_from_shore < 1000 AND implied_speed < 1) THEN 1
+      ELSE 0
+    END fishing,
+    SUM(hours) hours,
+    COUNT(DISTINCT DAY(timestamp)) days,
+    COUNT(DISTINCT timestamp) pings
+  FROM 
+    [world-fishing-827:gfw_research.FAO]
+  WHERE
+    _PARTITIONTIME BETWEEN timestamp('2012-01-01')
+    AND timestamp('2016-12-31')
+  GROUP BY
+    mmsi,
+    year, 
+    flag_country_name,
+    fishing"
   
-  vesselQueryGlobal <- tbl(GFW_connection, from = fao_file) %>%
-    dplyr::select(timestamp, year, mmsi, flag_country_name, hours, measure_new_score, distance_from_shore, implied_speed) %>%
-    collect(n=Inf) %>%
-    rename(Year = year) %>%
-    mutate(Date = date(timestamp)) %>%
-    mutate(Fishing = ifelse(measure_new_score >= 0.5 & 
-                              !((distance_from_shore < 1000 & implied_speed < 1)),1,0)) %>%
-    group_by(mmsi, Year, flag_country_name) %>%
-    summarize(total_hours_fished = sum(hours*Fishing),
-              Annual_Active_Days = n_distinct(Date),
-              Annual_Days_Fishing = n_distinct(Date[Fishing==1]),
-              number_days_transit = n_distinct(Date[Fishing==0]),
-              hours_per_day = total_hours_fished / Annual_Days_Fishing,
-              number_fishing_pings = sum(Fishing),
-              number_observation_pings = n(),
-              ping_ratio = number_fishing_pings/number_observation_pings,
-              day_ratio = Annual_Days_Fishing/Annual_Active_Days)
+  project <-  "ucsb-gfw"
+
+  vesselQueryGlobal <- query_exec(sql,project,max_pages = Inf)
   
 save(vesselQueryGlobal,file="data/vesselQueryGlobal.Rdata")
 } else {
   load("data/vesselQueryGlobal.Rdata")
 }
 
-global_effort_processed <- vesselQueryGlobal %>%
-  left_join(vessel_characteristics,by="mmsi")
+## Get global GFW Data for vessel info
+requery <- "no"
+if (requery == "yes"){
+  
+  sql <- "
+  SELECT
+    mmsi,
+    average_length,
+    avg_width,
+    inferred_label_allyears,
+    fraction_time_high_seas
+  FROM 
+    [world-fishing-827:gfw_research.vessel_info_20170405]
+  GROUP BY
+    mmsi,
+    average_length,
+    avg_width,
+    inferred_label_allyears,
+    fraction_time_high_seas"
+  
+  project <-  "ucsb-gfw"
 
+  vesselInfo <- query_exec(sql,project,max_pages = Inf)
+  
+save(vesselInfo,file="data/vesselInfo.Rdata")
+} else {
+  load("data/vesselInfo.Rdata")
+}
+
+vesselQueryGlobalProcessed <- vesselQueryGlobal %>%
+  rename(mmsi = effortTable_mmsi) %>%
+  gather(key,val,hours:pings) %>%
+  unite(key2,fishing,key) %>%
+  spread(key2,val,fill=0) %>%
+  rename(total_hours_fished = `1_hours`,
+         Annual_Days_Fishing = `1_days`,
+         number_days_transit  = `0_days`,
+         number_fishing_pings = `1_pings`,
+         number_observation_pings = `0_pings`) %>%
+  mutate(Annual_Active_Days = Annual_Days_Fishing + number_days_transit,
+         hours_per_day = total_hours_fished / Annual_Days_Fishing,
+         ping_ratio = number_fishing_pings/number_observation_pings,
+         day_ratio = Annual_Days_Fishing/Annual_Active_Days) %>%
+  select(-`0_hours`)  %>%
+  left_join(vesselInfo,by="mmsi") %>%
+  filter(Annual_Days_Fishing > 0 & 
+           !is.na(average_length) &
+           !is.na(avg_width) &
+           !is.na(inferred_label_allyears) &
+           !is.na(fraction_time_high_seas))
+
+globalModel <- lm(total_hours_fished ~ 
+                    Annual_Active_Days + 
+                    average_length +
+                    avg_width +
+                    factor(inferred_label_allyears) +
+                    fraction_time_high_seas +
+                    factor(flag_country_name) + 
+                    0 + 
+                    offset(rep(0, nrow(vesselQueryGlobalProcessed))), data =vesselQueryGlobalProcessed)
+
+vesselQueryGlobalProcessed <- vesselQueryGlobalProcessed %>%
+                    add_predictions(globalModel) %>%
+                    add_residuals(globalModel)
+                  
+vesselQueryGlobalProcessed %>% 
+  mutate(Thailand = ifelse(flag_country_name == "Thailand","Thailand","Not Thailand")) %>%
+  ggplot(aes(x=pred,y=total_hours_fished)) +
+  geom_point(aes(color=Thailand)) +
+  geom_abline(intercept = 0, slope = 1,color="red") +
+  xlab("Predicted annual hours fished\n[hrs/year]") +
+  ylab("Actual annual hours fished\n[hrs/year]")
 ```
 
