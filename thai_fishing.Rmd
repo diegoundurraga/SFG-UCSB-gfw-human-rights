@@ -222,8 +222,8 @@ world <- readOGR(dsn = "data/TM_WORLD_BORDERS-0.3", layer = "TM_WORLD_BORDERS-0.
 
 
 ```{r}
-vesselNumber <- 567334000
-yearPlot <- 2012
+vesselNumber <- 567000445
+yearPlot <- 2015
 
 fishingPoints <- vesselQueryAll %>%
   filter(mmsi == vesselNumber) %>%
@@ -311,7 +311,7 @@ leaflet() %>%
   )
 ```
 
-```{r}
+```{r, eval=FALSE}
 ## Get global GFW Data
 requery <- "no"
 if (requery == "yes"){
