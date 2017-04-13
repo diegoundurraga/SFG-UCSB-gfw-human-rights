@@ -322,10 +322,10 @@ if (requery == "yes"){
     flag_country_name,
     CASE 
       WHEN measure_new_score >=.5 AND NOT (distance_from_shore < 1000 AND implied_speed < 1) THEN 1
-      ELSE 0
+      WHEN measure_new_score >=0 THEN 0
     END fishing,
     SUM(hours) hours,
-    COUNT(DISTINCT DAY(timestamp)) days,
+    COUNT(DISTINCT DATE(timestamp)) days,
     COUNT(DISTINCT timestamp) pings
   FROM 
     [world-fishing-827:gfw_research.FAO]
@@ -377,17 +377,15 @@ save(vesselInfo,file="data/vesselInfo.Rdata")
 }
 
 vesselQueryGlobalProcessed <- vesselQueryGlobal %>%
-  rename(mmsi = effortTable_mmsi) %>%
   gather(key,val,hours:pings) %>%
   unite(key2,fishing,key) %>%
   spread(key2,val,fill=0) %>%
   rename(total_hours_fished = `1_hours`,
          Annual_Days_Fishing = `1_days`,
-         number_days_transit  = `0_days`,
+         Annual_Active_Days  = `0_days`,
          number_fishing_pings = `1_pings`,
          number_observation_pings = `0_pings`) %>%
-  mutate(Annual_Active_Days = Annual_Days_Fishing + number_days_transit,
-         hours_per_day = total_hours_fished / Annual_Days_Fishing,
+  mutate(hours_per_day = total_hours_fished / Annual_Days_Fishing,
          ping_ratio = number_fishing_pings/number_observation_pings,
          day_ratio = Annual_Days_Fishing/Annual_Active_Days) %>%
   select(-`0_hours`)  %>%
