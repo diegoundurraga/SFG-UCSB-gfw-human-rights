@@ -157,8 +157,7 @@ thai_effort_processed %>%
 thai_effort_processed %>%
   plot_ly(x= ~pred, y =~total_hours_fished,
           mode="scatter") %>%
-  add_markers(size=~Annual_Active_Days,
-              color=~Annual_Active_Days,
+  add_markers(color=~Annual_Active_Days,
               colors=c("black","red"),
               text = ~paste('Vessel: ', mmsi,
                             '<br>Year: ',Year,
