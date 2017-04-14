@@ -377,6 +377,7 @@ save(vesselInfo,file="data/vesselInfo.Rdata")
 }
 
 vesselQueryGlobalProcessed <- vesselQueryGlobal %>%
+  filter(!is.na(fishing)) %>%
   gather(key,val,hours:pings) %>%
   unite(key2,fishing,key) %>%
   spread(key2,val,fill=0) %>%
@@ -385,19 +386,19 @@ vesselQueryGlobalProcessed <- vesselQueryGlobal %>%
          Annual_Active_Days  = `0_days`,
          number_fishing_pings = `1_pings`,
          number_observation_pings = `0_pings`) %>%
-  mutate(hours_per_day = total_hours_fished / Annual_Days_Fishing,
+  mutate(Annual_Active_Days = pmax(Annual_Active_Days,Annual_Days_Fishing),
+         hours_per_day = total_hours_fished / Annual_Active_Days,
          ping_ratio = number_fishing_pings/number_observation_pings,
          day_ratio = Annual_Days_Fishing/Annual_Active_Days) %>%
   select(-`0_hours`)  %>%
-  left_join(vesselInfo,by="mmsi") %>%
+  left_join(vesselInfo[!duplicated(vesselInfo$mmsi),],by="mmsi") %>%
   filter(Annual_Days_Fishing > 0 & 
            !is.na(average_length) &
            !is.na(avg_width) &
            !is.na(inferred_label_allyears) &
            !is.na(fraction_time_high_seas))
 
-globalModel <- lm(total_hours_fished ~ 
-                    Annual_Active_Days + 
+globalModel <- lm(hours_per_day ~ 
                     average_length +
                     avg_width +
                     factor(inferred_label_allyears) +
@@ -411,11 +412,14 @@ vesselQueryGlobalProcessed <- vesselQueryGlobalProcessed %>%
                     add_residuals(globalModel)
                   
 vesselQueryGlobalProcessed %>% 
-  mutate(Thailand = ifelse(flag_country_name == "Thailand","Thailand","Not Thailand")) %>%
-  ggplot(aes(x=pred,y=total_hours_fished)) +
-  geom_point(aes(color=Thailand)) +
-  geom_abline(intercept = 0, slope = 1,color="red") +
-  xlab("Predicted annual hours fished\n[hrs/year]") +
-  ylab("Actual annual hours fished\n[hrs/year]")
+  mutate(Offender = ifelse(mmsi %in% c(567000445,567000421,567025800) & year == 2015,"Offender","Non_Offender")) %>%
+  arrange(Offender) %>%
+  ggplot(aes(x=pred,y=hours_per_day)) +
+  geom_point(aes(color=Offender,alpha=Offender)) +
+  geom_abline(intercept = 0, slope = 1,color="blue",alpha=0.5) +
+  xlab("Predicted hours fished per day\n[hours/day]") +
+  ylab("Actual hours fished per day\n[hours/day]") + 
+  scale_alpha_manual(guide='none', values = list(Non_Offender = 0.2, Offender = 1)) + 
+  scale_color_manual(guide='none', values = c("gray","red"))
 ```
 
