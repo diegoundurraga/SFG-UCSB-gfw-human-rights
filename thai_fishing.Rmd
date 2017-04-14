@@ -376,6 +376,13 @@ save(vesselInfo,file="data/vesselInfo.Rdata")
   load("data/vesselInfo.Rdata")
 }
 
+vesselInfoProcessed <- vesselInfo %>%
+  filter(!is.na(average_length) &
+           !is.na(avg_width) &
+           !is.na(inferred_label_allyears) &
+           !is.na(fraction_time_high_seas)) %>% 
+  distinct(mmsi, .keep_all = TRUE)
+
 vesselQueryGlobalProcessed <- vesselQueryGlobal %>%
   filter(!is.na(fishing)) %>%
   gather(key,val,hours:pings) %>%
@@ -391,7 +398,8 @@ vesselQueryGlobalProcessed <- vesselQueryGlobal %>%
          ping_ratio = number_fishing_pings/number_observation_pings,
          day_ratio = Annual_Days_Fishing/Annual_Active_Days) %>%
   select(-`0_hours`)  %>%
-  left_join(vesselInfo[!duplicated(vesselInfo$mmsi),],by="mmsi") %>%
+  left_join(vesselInfoProcessed,
+            by="mmsi") %>%
   filter(Annual_Days_Fishing > 0 & 
            !is.na(average_length) &
            !is.na(avg_width) &
@@ -412,14 +420,14 @@ vesselQueryGlobalProcessed <- vesselQueryGlobalProcessed %>%
                     add_residuals(globalModel)
                   
 vesselQueryGlobalProcessed %>% 
-  mutate(Offender = ifelse(mmsi %in% c(567000445,567000421,567025800) & year == 2015,"Offender","Non_Offender")) %>%
-  arrange(Offender) %>%
+  mutate(Vessel = ifelse(mmsi %in% c(567000445,567000421,567025800) & year == 2015,"Offender","Non_Offender")) %>%
+  arrange(Vessel) %>%
   ggplot(aes(x=pred,y=hours_per_day)) +
-  geom_point(aes(color=Offender,alpha=Offender)) +
+  geom_point(aes(color=Vessel,alpha=Vessel)) +
   geom_abline(intercept = 0, slope = 1,color="blue",alpha=0.5) +
   xlab("Predicted hours fished per day\n[hours/day]") +
   ylab("Actual hours fished per day\n[hours/day]") + 
   scale_alpha_manual(guide='none', values = list(Non_Offender = 0.2, Offender = 1)) + 
-  scale_color_manual(guide='none', values = c("gray","red"))
+  scale_color_manual(values = c("gray","red"))
 ```
 
