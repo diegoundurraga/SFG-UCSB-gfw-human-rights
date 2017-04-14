@@ -43,7 +43,7 @@ sql <-  paste("SELECT
 
 project <-  "ucsb-gfw"
 vesselQueryAll <- query_exec(sql,project,max_pages = Inf)
-
+## Get all vessel characteristic data
 sql_vessels <-  paste("SELECT
   mmsi,
   country,
@@ -65,6 +65,7 @@ save(vessel_characteristics,file="data/vessel_characteristics.Rdata")
 ```
 
 ```{r GFWdata}
+## Process data to look at various statistics for each vessel
 thai_effort_processed <- vesselQueryAll %>%
   rename(Year = year) %>%
   mutate(Date = date(timestamp)) %>%
@@ -402,17 +403,18 @@ vesselQueryGlobalProcessed <- vesselQueryGlobal %>%
             by="mmsi") %>%
   filter(Annual_Days_Fishing > 0 & 
            total_hours_fished >0 & 
+           avg_width > 0 &
            !is.na(average_length) &
            !is.na(avg_width) &
            !is.na(inferred_label_allyears) &
            !is.na(fraction_time_high_seas))
 
 globalModel <- lm(log(total_hours_fished) ~ 
-                    Annual_Active_Days +
-                    average_length +
-                    avg_width +
-                    factor(inferred_label_allyears) +
+                    log(Annual_Active_Days) +
+                    log(average_length) +
+                    log(avg_width) +
                     fraction_time_high_seas +
+                    factor(inferred_label_allyears) +
                     factor(flag_country_name) +
                     factor(year), 
                   data =vesselQueryGlobalProcessed)
@@ -426,10 +428,14 @@ vesselQueryGlobalProcessed %>%
   arrange(Vessel) %>%
   ggplot(aes(x=exp(pred),y=total_hours_fished)) +
   geom_point(aes(color=Vessel,alpha=Vessel)) +
-  geom_abline(intercept = 0, slope = 1,color="blue",alpha=0.5) +
+  geom_abline(intercept = 0, slope = 1,color="black",alpha=0.5) +
   xlab("Predicted annual hours fished\n[hours]") +
   ylab("Actual annual hours fished\n[hours]") + 
   scale_alpha_manual(guide='none', values = list(Non_Offender = 0.2, Offender = 1)) + 
-  scale_color_manual(values = c("gray","red"))
+  scale_color_manual(values = c("gray","red")) +
+  xlim(c(0,max(c(vesselQueryGlobalProcessed$total_hours_fished,
+                 vesselQueryGlobalProcessed$pred),na.rm=TRUE))) +
+  ylim(c(0,max(c(vesselQueryGlobalProcessed$total_hours_fished,
+                 vesselQueryGlobalProcessed$pred),na.rm=TRUE)))
 ```
 
