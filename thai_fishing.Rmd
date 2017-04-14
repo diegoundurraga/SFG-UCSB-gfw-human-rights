@@ -401,19 +401,21 @@ vesselQueryGlobalProcessed <- vesselQueryGlobal %>%
   left_join(vesselInfoProcessed,
             by="mmsi") %>%
   filter(Annual_Days_Fishing > 0 & 
+           total_hours_fished >0 & 
            !is.na(average_length) &
            !is.na(avg_width) &
            !is.na(inferred_label_allyears) &
            !is.na(fraction_time_high_seas))
 
-globalModel <- lm(hours_per_day ~ 
+globalModel <- lm(log(total_hours_fished) ~ 
+                    Annual_Active_Days +
                     average_length +
                     avg_width +
                     factor(inferred_label_allyears) +
                     fraction_time_high_seas +
-                    factor(flag_country_name) + 
-                    0 + 
-                    offset(rep(0, nrow(vesselQueryGlobalProcessed))), data =vesselQueryGlobalProcessed)
+                    factor(flag_country_name) +
+                    factor(year), 
+                  data =vesselQueryGlobalProcessed)
 
 vesselQueryGlobalProcessed <- vesselQueryGlobalProcessed %>%
                     add_predictions(globalModel) %>%
@@ -422,11 +424,11 @@ vesselQueryGlobalProcessed <- vesselQueryGlobalProcessed %>%
 vesselQueryGlobalProcessed %>% 
   mutate(Vessel = ifelse(mmsi %in% c(567000445,567000421,567025800) & year == 2015,"Offender","Non_Offender")) %>%
   arrange(Vessel) %>%
-  ggplot(aes(x=pred,y=hours_per_day)) +
+  ggplot(aes(x=exp(pred),y=total_hours_fished)) +
   geom_point(aes(color=Vessel,alpha=Vessel)) +
   geom_abline(intercept = 0, slope = 1,color="blue",alpha=0.5) +
-  xlab("Predicted hours fished per day\n[hours/day]") +
-  ylab("Actual hours fished per day\n[hours/day]") + 
+  xlab("Predicted annual hours fished\n[hours]") +
+  ylab("Actual annual hours fished\n[hours]") + 
   scale_alpha_manual(guide='none', values = list(Non_Offender = 0.2, Offender = 1)) + 
   scale_color_manual(values = c("gray","red"))
 ```
