@@ -1,0 +1,87 @@
+---
+title: "GFW and Human Rights"
+output: html_notebook
+---
+# Introduction
+The project aims to address to research questions relating to human rights violations and fisheries:  
+
+1. Can GFW be used to detect human rights violations in fisheries?
+2. Do human rights violations, particularly forced labor, drive overfishing?
+
+## Load libraries
+
+```{r load_libraries}
+library(lubridate)
+library(tidyverse)
+library(bigrquery)
+library(DBI)
+```
+
+```{r create_connection}
+BQ_connection <-  dbConnect(dbi_driver(), 
+                            dataset = "world-fishing-827", 
+                            project = "ucsb-gfw", 
+                            allowLargeResults = TRUE)
+```
+
+## Load GFW data
+```{sql GFWdata_query, eval=FALSE,connection = BQ_connection, output.var = "thai_fishing_effort"}
+SELECT
+    mmsi, 
+    DATE(timestamp) Date, 
+    IF(nnet_score == 1, hours, 0) fishing_hours,
+    eez_name
+  FROM
+    [world-fishing-827:gfw_research.nn]
+  WHERE
+    _PARTITIONTIME BETWEEN TIMESTAMP('2012-01-01')
+    AND TIMESTAMP('2016-12-31')
+  AND seg_id IN (SELECT seg_id FROM [world-fishing-827:gfw_research.good_segments])
+  AND flag_country_name = 'Thailand'
+  AND mmsi in (SELECT mmsi FROM [world-fishing-827:gfw_research.vessel_info] where on_fishing_list_nn)
+```
+```{r GFWdata_save, eval=FALSE}
+save(thai_fishing_effort,file="data/thai_fishing_effort.Rdata")
+```
+
+```{r GFWdata_load, eval=TRUE}
+load("data/thai_fishing_effort.Rdata")
+```
+
+```{r GFWdata_process, eval=TRUE}
+## Process data to look at various statistics for each vessel
+average_annual_days_df <- thai_fishing_effort %>%
+  group_by(mmsi,Date) %>%
+  summarize(fishing_hours = sum(fishing_hours)) %>%
+  ungroup() %>%
+  mutate(Year = year(Date),
+         day_fishing = ifelse(fishing_hours>0,1,0)) %>%
+  group_by(mmsi,Year) %>%
+  summarize(days_fishing = sum(day_fishing)) %>%
+  ungroup() %>%
+  group_by(mmsi) %>%
+  summarize(average_annual_days = mean(days_fishing))
+
+average_daily_hours_df <- thai_fishing_effort %>%
+  group_by(mmsi,Date) %>%
+  summarize(fishing_hours = sum(fishing_hours)) %>%
+  ungroup() %>%
+  mutate(Year = year(Date),
+         day_fishing = ifelse(fishing_hours>0,1,0)) %>%
+  group_by(mmsi) %>%
+  summarize(average_daily_hours = mean(fishing_hours))
+  
+master_df <- average_annual_days_df %>%
+  left_join(average_daily_hours_df) %>%
+  mutate(known_suspect = ifelse(mmsi %in% c(567000445,567000421,567025800),TRUE,FALSE))
+```
+
+```{r GFWdata_plot, eval=TRUE}
+master_df %>%
+  ggplot(aes(x=average_daily_hours,y=average_annual_days)) +
+  geom_point(aes(color=known_suspect)) +
+  xlab("Average daily fishing hours [hours/day]") +
+  ylab("Average annual days fishing [days/year]") +
+  scale_color_manual(name="Known suspect of\nhuman trafficking",values=c("gray", "red")) +
+  ggtitle("Activity of Thai Fishing Vessels using AIS\nPeriod from 2012-2016\nDate source: Global Fishing Watch")
+```
