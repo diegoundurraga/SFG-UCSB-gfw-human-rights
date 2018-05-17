@@ -131,6 +131,29 @@ thai_effort_processed %>%
 ```
 
 ```{r}
+thai_effort_processed %>%
+  ungroup() %>%
+  mutate(Offender = ifelse(Offender == 1,"Yes","No")) %>%
+  rename(`Known\nAbuses` = Offender) %>%
+  ggplot(aes(x = Annual_Active_Days, y = total_hours_fished),size = 5) +
+  geom_point(aes(fill = `Known\nAbuses`),shape =21,color="black",size=3) +
+  viridis::scale_fill_viridis(discrete = TRUE,option = "C",begin = 0.15,end =0.9) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        axis.title.x = element_text(size=20),
+        axis.title.y = element_text(size=20),
+        axis.text.x = element_text(size=20),
+        axis.text.y = element_text(size=20),
+        legend.text=element_text(size=20),
+        legend.title=element_text(size=20))+ 
+  geom_smooth(method='lm',color="black") +
+  xlab("\nAnnual Days at Sea") +
+  ylab("Annual Fishing Hours\n")
+```
+
+
+```{r}
 HRModel <- glm(Offender ~ hours_per_day + Annual_Active_Days, data = thai_effort_processed, family = "binomial")
 offenderLikelihood <-predict(HRModel,list(hours_per_day = thai_effort_processed$hours_per_day,
                                          Annual_Active_Days = thai_effort_processed$Annual_Active_Days),type="response") %>%
