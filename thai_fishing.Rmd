@@ -136,7 +136,7 @@ thai_effort_processed %>%
   mutate(Offender = ifelse(Offender == 1,"Yes","No")) %>%
   rename(`Known\nAbuses` = Offender) %>%
   ggplot(aes(x = Annual_Active_Days, y = total_hours_fished),size = 5) +
-  geom_point(aes(fill = `Known\nAbuses`),shape =21,color="black",size=3) +
+  geom_point(aes(fill = `Known\nAbuses`),shape =21,color="black",size=4) +
   viridis::scale_fill_viridis(discrete = TRUE,option = "C",begin = 0.15,end =0.9) +
   theme_bw() +
   theme(panel.grid.major = element_blank(), 
