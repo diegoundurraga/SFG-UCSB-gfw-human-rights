@@ -131,7 +131,7 @@ thai_effort_processed %>%
 ```
 
 ```{r}
-thai_effort_processed %>%
+thai_plot <- thai_effort_processed %>%
   ungroup() %>%
   mutate(Offender = ifelse(Offender == 1,"Yes","No")) %>%
   rename(`Known\nAbuses` = Offender) %>%
@@ -150,6 +150,8 @@ thai_effort_processed %>%
   geom_smooth(method='lm',color="black") +
   xlab("\nAnnual Days at Sea") +
   ylab("Annual Fishing Hours\n")
+
+ggsave("thai_plot.pdf",thai_plot,height=6,width=8,dpi=300,device="pdf")
 ```
 
 
