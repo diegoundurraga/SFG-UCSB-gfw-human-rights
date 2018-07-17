@@ -1,0 +1,48 @@
+---
+title: "Forced Labor Economic Model"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+# Model writeup
+
+## Goal
+* Identify vessels that routinely display much lower observed revenue/cost ratios than similar vessels fishing in the same area at the same time
+
+## Assumptions
+* For a given grid cell $g$ (*e.g.*, 0.1 x 0.1 degrees) and month, all vessels with the same gear type and flag are fishing the same stock (with biomass $B$) and share the same catchability (*q*)
+* Catch is proportional to $B$, $q$, and effort $E$ where effort is defined in units in *kWH* (see Sala et al. 2018) - more powerful boats catch more fish for a given time spent fishing
+* All vessels with the same gear type and flag have the same variable labor cost, variable fuel cost, and variable subsidy benefits. Units for each of these are in terms of *USD/kWH* - more powerful boats spend more money on labor (*i.e.*, have larger crew sizes), have higher engine fuel consumption rates, and have larger subsidy benefits (see Sala et al. 2018)
+* On average, all vessels with the same gear type and flag operating under these assumptions will have similar revenue/cost ratios for a given grid cell and time period - they are subject to the same economic dynamics and management regime
+* Vessels employing forced labor will routinely display much lower observed revenue/cost ratios compared to similar vessels fishing in the same area at the same time. "Routinely" is defined as more than 50% of fishing activity, and "much lower" is defined as more than two standard deviations below the mean
+
+## Model setup
+* $N$ fishing vessels of the same flag and gear type each fish in $G_n$ different fishing grid cells, but all fish together is the same fishing grid cell $g$
+* Each fishing vessel $n$ has a total travel cost during a single trip, and a fishing cost for each fishing grid cell
+* Total travel cost for each trip can be apportioned to each fishing grid cell based on the fraction of total fishing effort in each grid cell. Therefore, each fishing grid cell will have an associated travel cost
+* A "trip" is defined as all fishing and travel activity between two port visits, a port visit and a transhipment event, or two transshipment events
+
+## Equations
+Revenue of fishing vessel *n* in fishing grid cell *g* is defined as follows:
+$$R_{n,g} = q_g B_g E_{n,g} p_g$$
+
+Where $q_g$ is catchability in patch $g$, $B_g$ is the stock biomass in *MT*, $p_g$ is price per unit volume in *USD/MT*, and $E_n$ is effort in *kWH*.
+
+Variable cost of fishing vessel $n$ in fishing grid cell $g$ is defined as follows:
+$$C_{n,g} = (\frac{T_{n}E_{n,g}}{\sum_{g=1}^{G}E_{n,g}} + E_{n,g})(c_{fuel} + c_{labor} - s)$$
+
+Where $T_{n}$ is the total travel duration per trip in *hours*, $G$ is the total number of fishing grid cells visited per trip, $c_{fuel}$ is variable fuel cost in $\frac{USD}{kWH}$, $c_{labor}$ is variable labor cost in $\frac{USD}{kWH}$, and $s$ is variable subsidy benfit in $\frac{USD}{kWH}$.
+
+For every vessel and fishing grid cell, determine whether the ratio of revenue/cost is less than two standard deviations below the mean by determining if the following inequality holds true:
+
+$$\frac{R_{n,g}}{C_{n,g}} \ll \frac{\sum_{n=1}^{N}\frac{R_{n,g}}{C_{n,g}}}{N}$$
+
+Writing out this inequality yields the following:
+
+$$\frac{q_g B_g E_{n,g} p_g}{(\frac{T_{n}E_{n,g}}{\sum_{g=1}^{G}E_{n,g}} + E_{n,g})(c_{fuel} + c_{labor} - s)} \ll \frac{\sum_{n=1}^{N}\frac{q_g B_g E_{n,g} p_g}{(\frac{T_{n}E_{n,g}}{\sum_{g=1}^{G}E_{n,g}} + E_n)(c_{fuel} + c_{labor} - s)}}{N}$$
+
+Which can be simplified as follows. This inequality needs information only on fishing time and travel time:
+
+$$\frac{E_{n,g}}{\frac{T_{n}E_{n,g}}{\sum_{g=1}^{G}E_{n,g}} + E_n} \ll \frac{\sum_{n=1}^{N}\frac{E_{n,g}}{\frac{T_{n}E_{n,g}}{\sum_{g=1}^{G}E_{n,g}} + E_{n,g}}}{N}$$
+
+Finally, for every fishing vessel over a single year time frame, determine the fraction of fishing grid cells for which the above inequality holds true. If this number is greater than 50%, the vessel is labeled as risky for potentially employing forced labor.
