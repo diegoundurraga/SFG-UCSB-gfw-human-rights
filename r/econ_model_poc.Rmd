@@ -549,10 +549,10 @@ mean_distance_traveled_km,
 sd_distance_traveled_km,
 mean_mean_daily_fishing_hours,
 sd_mean_daily_fishing_hours),
-    (time_at_sea_hours < mean_time_at_sea_hours + {suspicious_cutff} * sd_time_at_sea_hours) suspicious_time_at_sea_hours,
-    (fishing_hours < mean_fishing_hours + {suspicious_cutff} * sd_fishing_hours) suspicious_fishing_hours,
-    (distance_traveled_km < mean_distance_traveled_km + {suspicious_cutff} * sd_distance_traveled_km) suspicious_distance_traveled_km,
-    (mean_daily_fishing_hours < mean_mean_daily_fishing_hours + {suspicious_cutff} * sd_mean_daily_fishing_hours) suspicious_mean_daily_fishing_hours
+    (time_at_sea_hours > mean_time_at_sea_hours + {suspicious_cutff} * sd_time_at_sea_hours) suspicious_time_at_sea_hours,
+    (fishing_hours > mean_fishing_hours + {suspicious_cutff} * sd_fishing_hours) suspicious_fishing_hours,
+    (distance_traveled_km > mean_distance_traveled_km + {suspicious_cutff} * sd_distance_traveled_km) suspicious_distance_traveled_km,
+    (mean_daily_fishing_hours > mean_mean_daily_fishing_hours + {suspicious_cutff} * sd_mean_daily_fishing_hours) suspicious_mean_daily_fishing_hours
 FROM
   main_voyage2
 LEFT JOIN
@@ -580,7 +580,7 @@ WHERE
 fishing_foreign_eez
 OR fishing_high_seas
 OR fishing_ntz
-OR suspicious_econ
+OR fraction_suspicious_econ > 0
 OR suspicious_time_at_sea_hours
 OR suspicious_fishing_hours
 OR suspicious_distance_traveled_km
@@ -588,5 +588,16 @@ OR suspicious_mean_daily_fishing_hours
 "
 suspicious <- bq_project_query(project, sql) %>%
   bq_table_download(max_results = Inf)
+
+suspicious_score <- suspicious %>%
+  mutate(suspicious_econ = fraction_suspicious_econ >0,
+         risk_score = fishing_foreign_eez+
+           fishing_high_seas+
+           fishing_ntz+
+           suspicious_econ+
+           suspicious_distance_traveled_km+
+           suspicious_time_at_sea_hours+
+           suspicious_fishing_hours+
+           suspicious_mean_daily_fishing_hours)
 ```
 
