@@ -169,6 +169,16 @@ bq_project_query(project,sql, destination_table = bq_table(project = project,tab
 # Extract AIS info from those voyages
 
 ```{r}
+# Get NTZ area of each EEZ
+# Data from https://www.protectedplanet.net/marine
+# Only interested in no-take area. Not interested in Anarctica
+ntzs <- read.csv("../data/WDPA_Mar2018_marine-csv/WDPA_Mar2018_marine-csv.csv",stringsAsFactors = FALSE) %>%
+  filter(NO_TAKE == "All") %>%
+  .$WDPAID %>%
+  unique()
+
+ntz_filter <- paste(paste0("regions LIKE '%mpant:",ntzs,"%'"),collapse=" OR ")
+
 sql<-glue::glue("
 #standardSQL
   WITH ping_info AS (
@@ -182,9 +192,13 @@ sql<-glue::glue("
     next_timestamp end_timestamp,
     hours,
     avg_distance_km,
+    eez_iso3,
     (CASE
         WHEN nnet_score = 1 AND NOT (distance_from_shore < 1000 AND implied_speed < 1) THEN hours
-        ELSE 0 END) nnet_hours
+        ELSE 0 END) nnet_hours,
+    (CASE
+        WHEN {ntz_filter} THEN TRUE
+        ELSE FALSE END) in_ntz
   FROM
     `world-fishing-827.gfw_research.nn`
   WHERE
@@ -203,9 +217,6 @@ sql<-glue::glue("
   SELECT
     mmsi,
     flag,
-    EXTRACT(YEAR
-    FROM
-      departure_timestamp) AS year,
     from_anchorage_id,
     from_anchorage_name,
     from_port_name,
@@ -215,22 +226,23 @@ sql<-glue::glue("
     to_port_name,
     arrival_timestamp,
     gear,
-    tonnage,
-    length,
     engine_power
   FROM
     `ucsb-gfw.human_rights.poc_voyages_with_anchorages`),
   ais_info AS(
   SELECT
     ping_info.mmsi mmsi,
+    voyage_info.flag flag,
+    voyage_info.gear gear,
+    voyage_info.engine_power engine_power,
     DATE_TRUNC(DATE(ping_info.start_timestamp), MONTH) month,
+    DATE_TRUNC(DATE(ping_info.start_timestamp), DAY) day,
     ping_info.start_lat start_lat,
     ping_info.start_lon start_lon,
+    ping_info.start_timestamp,
     ping_info.hours hours,
     ping_info.nnet_hours nnet_hours,
     ping_info.avg_distance_km avg_distance_km,
-    voyage_info.flag flag,
-    voyage_info.year year,
     voyage_info.from_anchorage_id from_anchorage_id,
     voyage_info.from_anchorage_name from_anchorage_name,
     voyage_info.from_port_name from_port_name,
@@ -239,10 +251,9 @@ sql<-glue::glue("
     voyage_info.to_anchorage_name to_anchorage_name,
     voyage_info.to_port_name to_port_name,
     voyage_info.arrival_timestamp arrival_timestamp,
-    voyage_info.gear gear,
-    voyage_info.tonnage tonnage,
-    voyage_info.length length,
-    voyage_info.engine_power engine_power
+    (NOT ping_info.eez_iso3 IS NULL AND NOT ping_info.eez_iso3 = voyage_info.flag AND ping_info.nnet_hours > 0) fishing_foreign_eez,
+    (ping_info.eez_iso3 IS NULL AND ping_info.nnet_hours > 0) fishing_high_seas,
+    (ping_info.in_ntz AND ping_info.nnet_hours > 0) fishing_ntz
   FROM
     ping_info
   LEFT JOIN
@@ -266,52 +277,130 @@ bq_project_query(project,query = sql, destination_table =  bq_table(project = pr
 
 # Grid AIS positions
 ```{r}
-grid_size = 0.1 # Grid in degrees
+grid_size <- 0.5 # Grid in degrees
+suspicious_cutff <- 4 # How many standard deviations from mean does revenue/cost ratio need to be to be suspicious?
 sql <-glue::glue("
-  #standardSQL
+#standardSQL
+  WITH grid_base AS(
   SELECT
-  mmsi,
-  gear,
-  flag,
-  month,
-  length,
-  engine_power,
-  tonnage,
-  FLOOR(start_lat/{grid_size}) * {grid_size} lat_bin,
-  FLOOR(start_lon/{grid_size}) * {grid_size} lon_bin,
-  from_anchorage_id,
-  from_anchorage_name,
-  from_port_name,
-  departure_timestamp,
-  DATE(departure_timestamp) departure_date,
-  to_anchorage_id,
-  to_anchorage_name,
-  to_port_name,
-  arrival_timestamp,
-  SUM(hours) hours,
-  SUM(nnet_hours) nnet_hours,
-  SUM(avg_distance_km) avg_distance_km
+    mmsi,
+    gear,
+    flag,
+    month,
+    engine_power,
+    FLOOR(start_lat/{grid_size}) * {grid_size} lat_bin,
+    FLOOR(start_lon/{grid_size}) * {grid_size} lon_bin,
+    from_anchorage_id,
+    from_anchorage_name,
+    from_port_name,
+    departure_timestamp,
+    DATE(departure_timestamp) departure_date,
+    to_anchorage_id,
+    to_anchorage_name,
+    to_port_name,
+    arrival_timestamp,
+    SUM(hours) hours,
+    SUM(nnet_hours) fishing_hours,
+    SUM(hours - nnet_hours) * engine_power travel_effort_kWH,
+    SUM(nnet_hours) * engine_power fishing_effort_kWH,
+    SUM(avg_distance_km) distance_km,
+    (SUM(CASE WHEN fishing_foreign_eez THEN 1 ELSE 0 END) > 0) fishing_foreign_eez,
+    (SUM(CASE WHEN fishing_high_seas THEN 1 ELSE 0 END) > 0) fishing_high_seas,
+    (SUM(CASE WHEN fishing_ntz THEN 1 ELSE 0 END) > 0) fishing_ntz
   FROM
-  `human_rights.poc_voyage_ais_positions`
+    `human_rights.poc_voyage_ais_positions`
+  WHERE
+    NOT flag IS NULL
   GROUP BY
-  mmsi,
-  gear,
-  flag,
-  month,
-  length,
-  engine_power,
-  tonnage,
-  lat_bin,
-  lon_bin,
-  from_anchorage_id,
-  from_anchorage_name,
-  from_port_name,
-  departure_timestamp,
-  departure_date,
-  to_anchorage_id,
-  to_anchorage_name,
-  to_port_name,
-  arrival_timestamp,
+    mmsi,
+    gear,
+    flag,
+    month,
+    engine_power,
+    lat_bin,
+    lon_bin,
+    from_anchorage_id,
+    from_anchorage_name,
+    from_port_name,
+    departure_timestamp,
+    departure_date,
+    to_anchorage_id,
+    to_anchorage_name,
+    to_port_name,
+    arrival_timestamp),
+  voyage_info AS(
+  SELECT
+    mmsi voy_mmsi,
+    gear voy_gear,
+    flag voy_flag,
+    month voy_month,
+    from_anchorage_id voy_from_anchorage_id,
+    departure_timestamp voy_departure_timestamp,
+    SUM(hours - nnet_hours) * engine_power voyage_travel_effort_kWH,
+    SUM(nnet_hours) * engine_power voyage_fishing_effort_kWH
+  FROM
+    `human_rights.poc_voyage_ais_positions`
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    month,
+    engine_power,
+    from_anchorage_id,
+    departure_timestamp),
+  voyage_grids AS(
+  SELECT
+    *
+  FROM
+    grid_base
+  LEFT JOIN
+    voyage_info
+  ON
+    grid_base.mmsi = voyage_info.voy_mmsi
+    AND grid_base.gear = voyage_info.voy_gear
+    AND grid_base.flag = voyage_info.voy_flag
+    AND grid_base.month = voyage_info.voy_month
+    AND grid_base.from_anchorage_id = voyage_info.voy_from_anchorage_id
+    AND grid_base.departure_timestamp = voyage_info.voy_departure_timestamp),
+  voyage_grids_2 AS(
+  SELECT
+    *
+    EXCEPT(voy_mmsi, voy_gear, voy_flag, voy_month, voy_from_anchorage_id,voy_departure_timestamp),
+    (CASE WHEN fishing_effort_kWH >0 THEN fishing_effort_kWH / (voyage_travel_effort_kWH * fishing_effort_kWH / voyage_fishing_effort_kWH + fishing_effort_kWH)
+      ELSE NULL
+      END) revenue_cost_ratio
+  FROM
+    voyage_grids),
+  summary_grids AS(
+  SELECT
+    flag sum_flag,
+    gear sum_gear,
+    month sum_month,
+    lat_bin sum_lat_bin,
+    lon_bin sum_lon_bin,
+    AVG(revenue_cost_ratio) mean_revenue_cost_ratio,
+    STDDEV(revenue_cost_ratio) sd_revenue_cost_ratio
+  FROM
+    voyage_grids_2
+  GROUP BY
+    sum_flag,
+    sum_gear,
+    sum_month,
+    sum_lat_bin,
+    sum_lon_bin)
+SELECT
+  *,
+  (revenue_cost_ratio < mean_revenue_cost_ratio - {suspicious_cutff} * sd_revenue_cost_ratio) suspicious_econ
+FROM
+  voyage_grids_2
+LEFT JOIN
+  summary_grids
+ON
+  voyage_grids_2.flag = summary_grids.sum_flag
+  AND voyage_grids_2.gear = summary_grids.sum_gear
+  AND voyage_grids_2.month = summary_grids.sum_month
+  AND voyage_grids_2.lat_bin = summary_grids.sum_lat_bin
+  AND voyage_grids_2.lon_bin = summary_grids.sum_lon_bin
   ")
 bq_table(project = project,table = "poc_voyages_gridded",dataset = "human_rights") %>% 
   bq_table_delete()
@@ -321,153 +410,183 @@ bq_project_query(project,query = sql, destination_table = bq_table(project = pro
 
 # Create voyage-level summaries
 ```{r}
-sql<-"
+sql<-glue::glue("
 #standardSQL
+  WITH main_voyage AS(
+  SELECT
+    mmsi,
+    gear,
+    flag,
+    EXTRACT(YEAR
+    FROM
+      departure_timestamp) AS year,
+    from_anchorage_id,
+    from_anchorage_name,
+    from_port_name,
+    departure_timestamp,
+    departure_date,
+    to_anchorage_id,
+    to_anchorage_name,
+    to_port_name,
+    arrival_timestamp,
+    SUM(hours) time_at_sea_hours,
+    SUM(fishing_hours) fishing_hours,
+    SUM(distance_km) distance_traveled_km,
+    (SUM(CASE
+          WHEN fishing_foreign_eez THEN 1
+          ELSE 0 END) > 0) fishing_foreign_eez,
+    (SUM(CASE
+          WHEN fishing_high_seas THEN 1
+          ELSE 0 END) > 0) fishing_high_seas,
+    (SUM(CASE
+          WHEN fishing_ntz THEN 1
+          ELSE 0 END) > 0) fishing_ntz,
+    (SUM(CASE
+          WHEN suspicious_econ THEN 1
+          ELSE 0 END)) / COUNT(*) fraction_suspicious_econ
+  FROM
+    `human_rights.poc_voyages_gridded`
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    from_anchorage_id,
+    from_anchorage_name,
+    from_port_name,
+    departure_timestamp,
+    departure_date,
+    to_anchorage_id,
+    to_anchorage_name,
+    to_port_name,
+    arrival_timestamp),
+  daily_fishing AS(
+  SELECT
+    mmsi,
+    gear,
+    flag,
+    from_anchorage_id,
+    departure_timestamp,
+    (CASE
+        WHEN SUM(hours) = 0 THEN NULL
+        ELSE SUM(hours) END) daily_hours,
+    day
+  FROM
+    `human_rights.poc_voyage_ais_positions`
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    from_anchorage_id,
+    departure_timestamp,
+    day),
+  daily_fishing_sum AS(
+  SELECT
+    mmsi sum_mmsi,
+    gear sum_gear,
+    flag sum_flag,
+    from_anchorage_id sum_from_anchorage_id,
+    departure_timestamp sum_departure_timestamp,
+    AVG(daily_hours) mean_daily_fishing_hours
+  FROM
+    daily_fishing
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    from_anchorage_id,
+    departure_timestamp),
+  main_voyage2 AS(
+  SELECT
+    * EXCEPT(sum_mmsi,
+      sum_gear,
+      sum_flag,
+      sum_from_anchorage_id,
+      sum_departure_timestamp)
+  FROM
+    main_voyage
+  LEFT JOIN
+    daily_fishing_sum
+  ON
+    main_voyage.mmsi = daily_fishing_sum.sum_mmsi
+    AND main_voyage.gear = daily_fishing_sum.sum_gear
+    AND main_voyage.flag = daily_fishing_sum.sum_flag
+    AND main_voyage.from_anchorage_id = daily_fishing_sum.sum_from_anchorage_id
+    AND main_voyage.departure_timestamp = daily_fishing_sum.sum_departure_timestamp),
+  summary_voyages AS(
+  SELECT
+    flag sum2_flag,
+    gear sum2_gear,
+    year sum2_year,
+    from_port_name sum2_from_port_name,
+    to_port_name sum2_to_port_name,
+    AVG(time_at_sea_hours) mean_time_at_sea_hours,
+    STDDEV(time_at_sea_hours) sd_time_at_sea_hours,
+    AVG(fishing_hours) mean_fishing_hours,
+    STDDEV(fishing_hours) sd_fishing_hours,
+    AVG(distance_traveled_km) mean_distance_traveled_km,
+    STDDEV(distance_traveled_km) sd_distance_traveled_km,
+    AVG(mean_daily_fishing_hours) mean_mean_daily_fishing_hours,
+    STDDEV(mean_daily_fishing_hours) sd_mean_daily_fishing_hours
+  FROM
+    main_voyage2
+  GROUP BY
+    sum2_flag,
+    sum2_gear,
+    sum2_year,
+    sum2_from_port_name,
+    sum2_to_port_name)
 SELECT
-mmsi,
-gear,
-  flag,
-  month,
-  length,
-  engine_power,
-  tonnage,
-from_anchorage_id,
-from_anchorage_name,
-from_port_name,
-departure_timestamp,
-departure_date,
-to_anchorage_id,
-to_anchorage_name,
-to_port_name,
-arrival_timestamp,
-  SUM(hours) hours,
-  SUM(nnet_hours) nnet_hours,
-  SUM(avg_distance_km) avg_distance_km
+  * EXCEPT(sum2_gear,
+    sum2_flag,
+    sum2_year,
+    sum2_from_port_name,
+    sum2_to_port_name,
+    mean_time_at_sea_hours,
+sd_time_at_sea_hours,
+mean_fishing_hours,
+sd_fishing_hours,
+mean_distance_traveled_km,
+sd_distance_traveled_km,
+mean_mean_daily_fishing_hours,
+sd_mean_daily_fishing_hours),
+    (time_at_sea_hours < mean_time_at_sea_hours + {suspicious_cutff} * sd_time_at_sea_hours) suspicious_time_at_sea_hours,
+    (fishing_hours < mean_fishing_hours + {suspicious_cutff} * sd_fishing_hours) suspicious_fishing_hours,
+    (distance_traveled_km < mean_distance_traveled_km + {suspicious_cutff} * sd_distance_traveled_km) suspicious_distance_traveled_km,
+    (mean_daily_fishing_hours < mean_mean_daily_fishing_hours + {suspicious_cutff} * sd_mean_daily_fishing_hours) suspicious_mean_daily_fishing_hours
 FROM
-`human_rights.poc_voyages_gridded`
-WHERE
-NOT flag IS NULL 
-GROUP BY
-mmsi,
-gear,
-  flag,
-  month,
-  length,
-  engine_power,
-  tonnage,
-from_anchorage_id,
-from_anchorage_name,
-from_port_name,
-departure_timestamp,
-departure_date,
-to_anchorage_id,
-to_anchorage_name,
-to_port_name,
-arrival_timestamp"
+  main_voyage2
+LEFT JOIN
+  summary_voyages
+ON
+  main_voyage2.gear = summary_voyages.sum2_gear
+  AND main_voyage2.flag = summary_voyages.sum2_flag
+  AND main_voyage2.year = summary_voyages.sum2_year
+  AND main_voyage2.from_port_name = summary_voyages.sum2_from_port_name
+  AND main_voyage2.to_port_name = summary_voyages.sum2_to_port_name")
 bq_table(project = project,table = "poc_voyages",dataset = "human_rights") %>% 
   bq_table_delete()
 bq_project_query(project,query = sql, destination_table = bq_table(project = project,table = "poc_voyages",dataset = "human_rights"),
                  allowLargeResults = TRUE)
+
 ```
 
-# Add voyage summary stats to gridded table
 ```{r}
 sql<-"
-#standardSQL
-  WITH gridded_voyages AS(
-  SELECT
-    *
-  FROM
-    `human_rights.poc_voyages_gridded`),
-  voyages AS(
-  SELECT
-    mmsi voy_mmsi,
-    from_anchorage_id voy_from_anchorage_id,
-    departure_timestamp voy_departure_timestamp,
-    to_anchorage_id voy_to_anchorage_id,
-    arrival_timestamp voy_arrival_timestamp,
-    (nnet_hours) * engine_power voyage_fishing_effort_kWH,
-    (hours) * engine_power voyage_travel_effort_kWH,
-    (hours + nnet_hours) * engine_power voyage_total_effort_kWH
-  FROM
-    `human_rights.poc_voyages`),
-  master AS(
-  SELECT
-    *
-  FROM
-    gridded_voyages
-  LEFT JOIN
-    voyages
-  ON
-    gridded_voyages.mmsi = voyages.voy_mmsi
-    AND gridded_voyages.from_anchorage_id = voyages.voy_from_anchorage_id
-    AND gridded_voyages.departure_timestamp = voyages.voy_departure_timestamp
-    AND gridded_voyages.to_anchorage_id = voyages.voy_to_anchorage_id
-    AND gridded_voyages.arrival_timestamp = voyages.voy_arrival_timestamp)
 SELECT
-  mmsi,
-  gear,
-  flag,
-  month,
-  lat_bin,
-  lon_bin,
-  from_anchorage_id,
-  from_anchorage_name,
-  from_port_name,
-  departure_timestamp,
-  departure_date,
-  to_anchorage_id,
-  to_anchorage_name,
-  to_port_name,
-  arrival_timestamp,
-  (nnet_hours) * engine_power grid_fishing_effort_kWH,
-  (hours) * engine_power grid_travel_effort_kWH,
-  (hours + nnet_hours) * engine_power grid_total_effort_kWH,
-  voyage_fishing_effort_kWH,
-  voyage_travel_effort_kWH,
-  engine_power voyage_total_effort_kWH,
-  (CASE WHEN (nnet_hours = 0 OR voyage_fishing_effort_kWH = 0) THEN NULL
-  ELSE (nnet_hours) * engine_power / (voyage_travel_effort_kWH * (nnet_hours) * engine_power / voyage_fishing_effort_kWH + (nnet_hours) * engine_power)
-  END) revenue_cost_ratio
+*
 FROM
-  master
+`human_rights.poc_voyages`
+WHERE
+fishing_foreign_eez
+OR fishing_high_seas
+OR fishing_ntz
+OR suspicious_econ
+OR suspicious_time_at_sea_hours
+OR suspicious_fishing_hours
+OR suspicious_distance_traveled_km
+OR suspicious_mean_daily_fishing_hours
 "
-bq_table(project = project,table = "poc_voyages_gridded_expanded",dataset = "human_rights") %>% 
-  bq_table_delete()
-bq_project_query(project,query = sql, destination_table = bq_table(project = project,table = "poc_voyages_gridded_expanded",dataset = "human_rights"),
-                 allowLargeResults = TRUE)
-
-sql<-"SELECT
-mmsi,
-  gear,
-  flag,
-  month,
-  lat_bin,
-  lon_bin,
-  from_port_name,
-  to_port_name,
-revenue_cost_ratio
-FROM `human_rights.poc_voyages_gridded_expanded` 
-WHERE NOT revenue_cost_ratio IS NULL"
-
-poc_voyages_gridded_expanded <- bq_project_query(project, sql) %>%
+suspicious <- bq_project_query(project, sql) %>%
   bq_table_download(max_results = Inf)
-
-cutoff_df <- poc_voyages_gridded_expanded %>%
-  mutate(lat_bin = floor(lat_bin),
-         lon_bin = floor(lon_bin)) %>%
-  group_by(gear,flag,month,lat_bin,lon_bin,from_port_name,to_port_name) %>%
-  summarize(n_trips = n(),
-            mean_RvC = mean(revenue_cost_ratio),
-            sd_RvC = sd(revenue_cost_ratio),
-            cutoff_RvC = mean_RvC - 3*sd_RvC)
-
-poc_voyages_gridded_expanded2 <-  poc_voyages_gridded_expanded%>%
-  mutate(lat_bin = floor(lat_bin),
-         lon_bin = floor(lon_bin)) %>%
-  left_join(cutoff_df,by = c("gear", "flag", "month", "lat_bin", "lon_bin","from_port_name","to_port_name")) %>%
-  mutate(suspicious = ifelse(revenue_cost_ratio < cutoff_RvC, TRUE, FALSE))
 ```
-
-
 
