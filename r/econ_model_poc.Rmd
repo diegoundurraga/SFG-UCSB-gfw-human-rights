@@ -36,7 +36,8 @@ FROM `world-fishing-827.gfw_research.vessel_info_20180518`
 WHERE
 best_flag = '{flag_poc}'
 AND best_label = '{gear_poc}'
-AND is_active")
+AND is_active
+AND on_fishing_list_nn")
 
 # Run new query. Delete old table, upload new one
 bq_table(project = project,table = "poc_vessel_info",dataset = "human_rights") %>% 
@@ -159,15 +160,180 @@ WHERE
 NOT gear IS NULL
 "
 
-#bq_table(project = project,table = "poc_voyages_with_anchorages",dataset = "human_rights") %>% 
-#  bq_table_delete()
+bq_table(project = project,table = "poc_voyages_with_anchorages",dataset = "human_rights") %>% 
+  bq_table_delete()
 
 bq_project_query(project,sql, destination_table = bq_table(project = project,table = "poc_voyages_with_anchorages",dataset = "human_rights"),
                  use_legacy_sql = FALSE, allowLargeResults = TRUE)
 ```
 
-# Extract AIS info from those voyages
+# Extract all rendezvous events during those voyages
+```{r}
+sql<-"
+#standardSQL
+  WITH transshipment_ids AS(
+  SELECT
+    transshipment_vessel_id trans_mmsi,
+    TRUE transhipment_vessel
+  FROM
+    `world-fishing-827.gfw_research.encounters_fishing_transshipment_20180327`),
+  bunker_ids AS(
+  SELECT
+    mmsi bunker_mmsi,
+    TRUE bunker_vessel
+  FROM
+    `world-fishing-827.gfw_research.bunker_vessels_11072017` ),
+  fishing_ids AS(
+  SELECT
+    mmsi fishing_mmsi,
+    TRUE fishing_vessel
+  FROM
+    `world-fishing-827.gfw_research.vessel_info_20180518`
+  WHERE
+    on_fishing_list_nn ),
+  rendezvous_table AS(
+  SELECT
+    vessel_1_id,
+    vessel_2_id,
+    event_start,
+    event_end
+  FROM
+    `world-fishing-827.gfw_research.voyage_events_all_vessels_20180307`
+  WHERE
+    event_type = 'rendezvous'),
+  voyages AS(
+  SELECT
+    mmsi,
+    departure_timestamp,
+    from_anchorage_id,
+    arrival_timestamp,
+    to_anchorage_id
+  FROM
+    `human_rights.poc_voyages_with_anchorages`),
+  table_with_vessels AS(
+  SELECT
+    *
+  FROM
+    rendezvous_table
+  JOIN
+    transshipment_ids
+  ON
+    (rendezvous_table.vessel_1_id = transshipment_ids.trans_mmsi
+      OR rendezvous_table.vessel_2_id = transshipment_ids.trans_mmsi)
+  JOIN
+    bunker_ids
+  ON
+    (rendezvous_table.vessel_1_id = bunker_ids.bunker_mmsi
+      OR rendezvous_table.vessel_2_id = bunker_ids.bunker_mmsi)
+  JOIN
+    fishing_ids
+  ON
+    (rendezvous_table.vessel_1_id = fishing_ids.fishing_mmsi
+      OR rendezvous_table.vessel_2_id = fishing_ids.fishing_mmsi) ),
+  joined_table AS(
+  SELECT
+    *,
+    (transhipment_vessel
+      AND fishing_vessel) encounter_transshipment,
+    (bunker_vessel
+      AND fishing_vessel) encounter_bunker,
+    (fishing_vessel
+      AND fishing_vessel) encounter_fishing,
+    (NOT ((transhipment_vessel
+          AND fishing_vessel)
+        OR (bunker_vessel
+          AND fishing_vessel)
+        OR (fishing_vessel
+          AND fishing_vessel))) encounter_unspecified
+  FROM
+    table_with_vessels
+  JOIN
+    voyages
+  ON
+    (table_with_vessels.vessel_1_id = voyages.mmsi
+      OR table_with_vessels.vessel_2_id = voyages.mmsi)
+    AND table_with_vessels.event_start >voyages.departure_timestamp
+    AND table_with_vessels.event_end < voyages.arrival_timestamp)
+SELECT
+  mmsi,
+  departure_timestamp,
+  from_anchorage_id,
+  arrival_timestamp,
+  to_anchorage_id,
+  (SUM(CASE WHEN encounter_transshipment THEN 1 ELSE 0 END)) encounters_transshipment,
+  (SUM(CASE WHEN encounter_bunker THEN 1 ELSE 0 END)) encounters_bunker,
+  (SUM(CASE WHEN encounter_fishing THEN 1 ELSE 0 END)) encounters_fishing,
+  (SUM(CASE WHEN encounter_unspecified THEN 1 ELSE 0 END)) encounters_unspecified
+FROM
+  joined_table
+GROUP BY
+  mmsi,
+  departure_timestamp,
+  from_anchorage_id,
+  arrival_timestamp,
+  to_anchorage_id"
 
+bq_table(project = project,table = "poc_rendezvouses",dataset = "human_rights") %>% 
+  bq_table_delete()
+
+bq_project_query(project,sql, destination_table = bq_table(project = project,table = "poc_rendezvouses",dataset = "human_rights"),
+                 use_legacy_sql = FALSE, allowLargeResults = TRUE)
+```
+
+
+# Extract AIS info from those voyages
+# THIS WORKED
+```{r}
+#standardSQL
+sql<-"WITH rendezvous_table AS(
+  SELECT
+    vessel_1_id,
+    vessel_2_id,
+    event_start,
+    event_end
+  FROM
+    `world-fishing-827.gfw_research.voyage_events_all_vessels_20180307`
+  WHERE
+    event_type = 'rendezvous'),
+  voyages AS(
+  SELECT
+    mmsi,
+    departure_timestamp,
+    from_anchorage_id,
+    arrival_timestamp,
+    to_anchorage_id
+  FROM
+    `human_rights.poc_voyages_with_anchorages`),
+  joined_table AS(
+  SELECT
+    *
+  FROM
+    rendezvous_table
+  JOIN
+    voyages
+  ON
+    (rendezvous_table.vessel_1_id = voyages.mmsi
+      OR rendezvous_table.vessel_2_id = voyages.mmsi)
+    AND rendezvous_table.event_start >voyages.departure_timestamp
+    AND rendezvous_table.event_end < voyages.arrival_timestamp)
+SELECT
+  mmsi,
+  departure_timestamp,
+  from_anchorage_id,
+  arrival_timestamp,
+  to_anchorage_id,
+  COUNT(*) number_rendezvouses
+FROM
+  joined_table
+GROUP BY
+  mmsi,
+  departure_timestamp,
+  from_anchorage_id,
+  arrival_timestamp,
+  to_anchorage_id""
+```
+
+# THIS DIDN'T
 ```{r}
 # Get NTZ area of each EEZ
 # Data from https://www.protectedplanet.net/marine
