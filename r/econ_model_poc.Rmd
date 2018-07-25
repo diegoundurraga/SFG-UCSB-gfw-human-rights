@@ -36,9 +36,7 @@ best_engine_power
 FROM `world-fishing-827.gfw_research.vessel_info_20180518`
 WHERE
 best_flag = '{flag_poc}'
-# AND best_label = '{gear_poc}'
-AND is_active
-AND on_fishing_list_nn")
+# AND best_label = '{gear_poc}'")
 
 # Run new query. Delete old table, upload new one
 bq_table(project = project,table = "poc_vessel_info",dataset = "human_rights") %>% 
@@ -161,6 +159,83 @@ WHERE
 NOT gear IS NULL
 "
 
+# Using better table
+
+sql <-"
+#standardSQL
+  WITH master AS(
+  SELECT
+    anchorages.mmsi mmsi,
+    anchorages.flag flag,
+    anchorages.gear gear,
+    anchorages.engine_power engine_power,
+    anchorages.departure_timestamp departure_timestamp,
+    anchorages.arrival_timestamp arrival_timestamp,
+    anchorages.departure_port departure_port,
+    anchorages.arrival_port arrival_port
+  FROM (
+    SELECT
+      anchor1.mmsi mmsi,
+      anchor2.best_flag flag,
+      anchor2.best_label gear,
+      anchor2.best_engine_power engine_power,
+      anchor2.port_exit_timestamp departure_timestamp,
+      anchor1.port_entry_timestamp arrival_timestamp,
+      anchor2.port departure_port,
+      anchor1.port arrival_port
+    FROM (
+      SELECT
+        vessel_id mmsi,
+        port_entry_timestamp,
+        port_exit_timestamp,
+        port_label port,
+        ROW_NUMBER() OVER (PARTITION BY vessel_id ORDER BY port_entry_timestamp) rn
+      FROM
+        `world-fishing-827.gfw_research.port_entry_exit_only_20180121`
+      WHERE
+        vessel_id IN (
+        SELECT
+          mmsi
+        FROM
+          `human_rights.poc_vessel_info`)) anchor1
+    JOIN (
+      SELECT
+        *,
+        rn+1 rn_plus
+      FROM ( (
+          SELECT
+            vessel_id mmsi,
+            EXTRACT(YEAR
+            FROM
+              port_exit_timestamp) AS year,
+            port_entry_timestamp,
+            port_exit_timestamp,
+            port_label port,
+            ROW_NUMBER() OVER (PARTITION BY vessel_id ORDER BY port_entry_timestamp) rn
+          FROM
+            `world-fishing-827.gfw_research.port_entry_exit_only_20180121`) voy_info
+        LEFT JOIN (
+          SELECT
+            mmsi mmsi_info,
+            year year_info,
+            best_flag,
+            best_label,
+            best_engine_power
+          FROM
+            `human_rights.poc_vessel_info`) ves_info
+        ON
+          voy_info.mmsi = ves_info.mmsi_info
+          AND voy_info.year = ves_info.year_info)) anchor2
+    ON
+      anchor1.mmsi = anchor2.mmsi
+      AND anchor1.rn = anchor2.rn_plus) anchorages)
+SELECT
+  *
+FROM
+  master
+"
+  
+
 bq_table(project = project,table = "poc_voyages_with_anchorages",dataset = "human_rights") %>% 
   bq_table_delete()
 
@@ -207,9 +282,9 @@ sql<-"
   SELECT
     mmsi,
     departure_timestamp,
-    from_anchorage_id,
+    departure_port,
     arrival_timestamp,
-    to_anchorage_id
+    arrival_port
   FROM
     `human_rights.poc_voyages_with_anchorages`),
   joined_table AS(
@@ -227,9 +302,9 @@ sql<-"
 final_event_table AS(SELECT
   mmsi,
   departure_timestamp,
-  from_anchorage_id,
+  departure_port,
   arrival_timestamp,
-  to_anchorage_id,
+  arrival_port,
   (CASE
       WHEN event_type = 'rendezvous' AND (vessel_1_id IN (  SELECT  trans_mmsi  FROM  transshipment_ids) OR vessel_2_id IN (  SELECT  trans_mmsi  FROM  transshipment_ids)) THEN 1
       ELSE 0 END) encounter_transshipment,
@@ -247,9 +322,9 @@ FROM
 SELECT
   mmsi,
   departure_timestamp,
-  from_anchorage_id,
+  departure_port,
   arrival_timestamp,
-  to_anchorage_id,
+  arrival_port,
   SUM(encounter_transshipment) encounters_transshipment,
   SUM(encounter_bunker) encounters_bunker,
   SUM(encounter_fishing) encounters_fishing,
@@ -259,9 +334,9 @@ FROM
 GROUP BY
   mmsi,
   departure_timestamp,
-  from_anchorage_id,
+  departure_port,
   arrival_timestamp,
-  to_anchorage_id
+  arrival_port
 "
 
 bq_table(project = project,table = "poc_events",dataset = "human_rights") %>% 
@@ -321,14 +396,10 @@ sql<-glue::glue("
   SELECT
     mmsi,
     flag,
-    from_anchorage_id,
-    from_anchorage_name,
-    from_port_name,
+    departure_port,
     departure_timestamp,
-    to_anchorage_id,
-    to_anchorage_name,
-    to_port_name,
     arrival_timestamp,
+    arrival_port,
     gear,
     engine_power
   FROM
@@ -347,13 +418,9 @@ sql<-glue::glue("
     ping_info.hours hours,
     ping_info.nnet_hours nnet_hours,
     ping_info.avg_distance_km avg_distance_km,
-    voyage_info.from_anchorage_id from_anchorage_id,
-    voyage_info.from_anchorage_name from_anchorage_name,
-    voyage_info.from_port_name from_port_name,
+    voyage_info.departure_port departure_port,
     voyage_info.departure_timestamp departure_timestamp,
-    voyage_info.to_anchorage_id to_anchorage_id,
-    voyage_info.to_anchorage_name to_anchorage_name,
-    voyage_info.to_port_name to_port_name,
+    voyage_info.arrival_port arrival_port,
     voyage_info.arrival_timestamp arrival_timestamp,
     (NOT ping_info.eez_iso3 IS NULL AND NOT ping_info.eez_iso3 = voyage_info.flag AND ping_info.nnet_hours > 0) fishing_foreign_eez,
     (ping_info.eez_iso3 IS NULL AND ping_info.nnet_hours > 0) fishing_high_seas,
@@ -394,14 +461,10 @@ sql <-glue::glue("
     engine_power,
     FLOOR(start_lat/{grid_size}) * {grid_size} lat_bin,
     FLOOR(start_lon/{grid_size}) * {grid_size} lon_bin,
-    from_anchorage_id,
-    from_anchorage_name,
-    from_port_name,
+    departure_port,
     departure_timestamp,
     DATE(departure_timestamp) departure_date,
-    to_anchorage_id,
-    to_anchorage_name,
-    to_port_name,
+    arrival_port,
     arrival_timestamp,
     SUM(hours) hours,
     SUM(nnet_hours) fishing_hours,
@@ -423,14 +486,10 @@ sql <-glue::glue("
     engine_power,
     lat_bin,
     lon_bin,
-    from_anchorage_id,
-    from_anchorage_name,
-    from_port_name,
+    departure_port,
     departure_timestamp,
     departure_date,
-    to_anchorage_id,
-    to_anchorage_name,
-    to_port_name,
+    arrival_port,
     arrival_timestamp),
   voyage_info AS(
   SELECT
@@ -438,7 +497,7 @@ sql <-glue::glue("
     gear voy_gear,
     flag voy_flag,
     month voy_month,
-    from_anchorage_id voy_from_anchorage_id,
+    departure_port voy_departure_port,
     departure_timestamp voy_departure_timestamp,
     SUM(hours - nnet_hours) * engine_power voyage_travel_effort_kWH,
     SUM(nnet_hours) * engine_power voyage_fishing_effort_kWH
@@ -450,7 +509,7 @@ sql <-glue::glue("
     flag,
     month,
     engine_power,
-    from_anchorage_id,
+    departure_port,
     departure_timestamp),
   voyage_grids AS(
   SELECT
@@ -464,12 +523,12 @@ sql <-glue::glue("
     AND grid_base.gear = voyage_info.voy_gear
     AND grid_base.flag = voyage_info.voy_flag
     AND grid_base.month = voyage_info.voy_month
-    AND grid_base.from_anchorage_id = voyage_info.voy_from_anchorage_id
+    AND grid_base.departure_port = voyage_info.voy_departure_port
     AND grid_base.departure_timestamp = voyage_info.voy_departure_timestamp),
   voyage_grids_2 AS(
   SELECT
     *
-    EXCEPT(voy_mmsi, voy_gear, voy_flag, voy_month, voy_from_anchorage_id,voy_departure_timestamp),
+    EXCEPT(voy_mmsi, voy_gear, voy_flag, voy_month, voy_departure_port,voy_departure_timestamp),
     (CASE WHEN fishing_effort_kWH >0 THEN fishing_effort_kWH / (voyage_travel_effort_kWH * fishing_effort_kWH / voyage_fishing_effort_kWH + fishing_effort_kWH)
       ELSE NULL
       END) revenue_cost_ratio
@@ -524,14 +583,10 @@ sql<-glue::glue("
     EXTRACT(YEAR
     FROM
       departure_timestamp) AS year,
-    from_anchorage_id,
-    from_anchorage_name,
-    from_port_name,
+    departure_port,
     departure_timestamp,
     departure_date,
-    to_anchorage_id,
-    to_anchorage_name,
-    to_port_name,
+    arrival_port,
     arrival_timestamp,
     SUM(hours) time_at_sea_hours,
     SUM(fishing_hours) fishing_hours,
@@ -554,21 +609,17 @@ sql<-glue::glue("
     mmsi,
     gear,
     flag,
-    from_anchorage_id,
-    from_anchorage_name,
-    from_port_name,
+    departure_port,
     departure_timestamp,
     departure_date,
-    to_anchorage_id,
-    to_anchorage_name,
-    to_port_name,
+    arrival_port,
     arrival_timestamp),
   daily_fishing AS(
   SELECT
     mmsi,
     gear,
     flag,
-    from_anchorage_id,
+    departure_port,
     departure_timestamp,
     (CASE
         WHEN SUM(hours) = 0 THEN NULL
@@ -580,7 +631,7 @@ sql<-glue::glue("
     mmsi,
     gear,
     flag,
-    from_anchorage_id,
+    departure_port,
     departure_timestamp,
     day),
   daily_fishing_sum AS(
@@ -588,7 +639,7 @@ sql<-glue::glue("
     mmsi sum_mmsi,
     gear sum_gear,
     flag sum_flag,
-    from_anchorage_id sum_from_anchorage_id,
+    departure_port sum_departure_port,
     departure_timestamp sum_departure_timestamp,
     AVG(daily_hours) mean_daily_fishing_hours
   FROM
@@ -597,14 +648,14 @@ sql<-glue::glue("
     mmsi,
     gear,
     flag,
-    from_anchorage_id,
+    departure_port,
     departure_timestamp),
   main_voyage2 AS(
   SELECT
     * EXCEPT(sum_mmsi,
       sum_gear,
       sum_flag,
-      sum_from_anchorage_id,
+      sum_departure_port,
       sum_departure_timestamp)
   FROM
     main_voyage
@@ -614,15 +665,15 @@ sql<-glue::glue("
     main_voyage.mmsi = daily_fishing_sum.sum_mmsi
     AND main_voyage.gear = daily_fishing_sum.sum_gear
     AND main_voyage.flag = daily_fishing_sum.sum_flag
-    AND main_voyage.from_anchorage_id = daily_fishing_sum.sum_from_anchorage_id
+    AND main_voyage.departure_port = daily_fishing_sum.sum_departure_port
     AND main_voyage.departure_timestamp = daily_fishing_sum.sum_departure_timestamp),
   summary_voyages AS(
   SELECT
     flag sum2_flag,
     gear sum2_gear,
     year sum2_year,
-    from_port_name sum2_from_port_name,
-    to_port_name sum2_to_port_name,
+    departure_port sum2_departure_port,
+    arrival_port sum2_arrival_port,
     AVG(time_at_sea_hours) mean_time_at_sea_hours,
     STDDEV(time_at_sea_hours) sd_time_at_sea_hours,
     AVG(fishing_hours) mean_fishing_hours,
@@ -637,15 +688,15 @@ sql<-glue::glue("
     sum2_flag,
     sum2_gear,
     sum2_year,
-    sum2_from_port_name,
-    sum2_to_port_name),
+    sum2_departure_port,
+    sum2_arrival_port),
   event_table AS(
   SELECT
     mmsi events_mmsi,
     departure_timestamp events_departure_timestamp,
-    from_anchorage_id events_from_anchorage_id,
+    departure_port events_departure_port,
     arrival_timestamp events_arrival_timestamp,
-    to_anchorage_id events_to_anchorage_id,
+    arrival_port events_arrival_port,
     encounters_transshipment,
     encounters_bunker,
     encounters_fishing,
@@ -657,8 +708,8 @@ sql<-glue::glue("
     * EXCEPT(sum2_gear,
       sum2_flag,
       sum2_year,
-      sum2_from_port_name,
-      sum2_to_port_name,
+      sum2_departure_port,
+      sum2_arrival_port,
       mean_time_at_sea_hours,
       sd_time_at_sea_hours,
       mean_fishing_hours,
@@ -669,9 +720,9 @@ sql<-glue::glue("
       sd_mean_daily_fishing_hours,
       events_mmsi,
       events_departure_timestamp,
-      events_from_anchorage_id,
+      events_departure_port,
       events_arrival_timestamp,
-      events_to_anchorage_id),
+      events_arrival_port),
     (time_at_sea_hours > mean_time_at_sea_hours + {suspicious_cutff} * sd_time_at_sea_hours) suspicious_time_at_sea_hours,
     (fishing_hours > mean_fishing_hours + {suspicious_cutff} * sd_fishing_hours) suspicious_fishing_hours,
     (distance_traveled_km > mean_distance_traveled_km + {suspicious_cutff} * sd_distance_traveled_km) suspicious_distance_traveled_km,
@@ -688,26 +739,26 @@ sql<-glue::glue("
     main_voyage2.gear = summary_voyages.sum2_gear
     AND main_voyage2.flag = summary_voyages.sum2_flag
     AND main_voyage2.year = summary_voyages.sum2_year
-    AND main_voyage2.from_port_name = summary_voyages.sum2_from_port_name
-    AND main_voyage2.to_port_name = summary_voyages.sum2_to_port_name
+    AND main_voyage2.departure_port = summary_voyages.sum2_departure_port
+    AND main_voyage2.arrival_port = summary_voyages.sum2_arrival_port
   LEFT JOIN
     event_table
   ON
     main_voyage2.mmsi = event_table.events_mmsi
     AND main_voyage2.departure_timestamp = event_table.events_departure_timestamp
-    AND main_voyage2.from_anchorage_id = event_table.events_from_anchorage_id
+    AND main_voyage2.departure_port = event_table.events_departure_port
     AND main_voyage2.arrival_timestamp = event_table.events_arrival_timestamp
-    AND main_voyage2.to_anchorage_id = event_table.events_to_anchorage_id),
+    AND main_voyage2.arrival_port = event_table.events_arrival_port),
   penultimate2 AS(
   SELECT
     mmsi,
     gear,
     flag,
     year,
-    from_port_name,
+    departure_port,
     departure_date,
     departure_timestamp,
-    to_port_name,
+    arrival_port,
     arrival_timestamp,
     time_at_sea_hours,
     fishing_hours,
@@ -792,6 +843,6 @@ risky_vessels <- results %>%
   group_by(mmsi,year) %>% 
   summarize(max_risk_score = max(risk_score)) %>%
   mutate(on_list = ifelse(mmsi %in% thai_mmsi,TRUE,FALSE)) %>%
-  arrange(max_risk_score)
+  arrange(desc(max_risk_score))
 ```
 
