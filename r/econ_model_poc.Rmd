@@ -500,6 +500,7 @@ sql <-glue::glue("
     departure_port voy_departure_port,
     departure_timestamp voy_departure_timestamp,
     SUM(hours - nnet_hours) * engine_power voyage_travel_effort_kWH,
+    SUM(hours - nnet_hours) * engine_power / COUNT(*) travel_effort_per_grid_kWH,
     SUM(nnet_hours) * engine_power voyage_fishing_effort_kWH
   FROM
     `human_rights.poc_voyage_ais_positions`
@@ -529,7 +530,7 @@ sql <-glue::glue("
   SELECT
     *
     EXCEPT(voy_mmsi, voy_gear, voy_flag, voy_month, voy_departure_port,voy_departure_timestamp),
-    (CASE WHEN fishing_effort_kWH >0 THEN fishing_effort_kWH / (voyage_travel_effort_kWH * fishing_effort_kWH / voyage_fishing_effort_kWH + fishing_effort_kWH)
+    (CASE WHEN fishing_effort_kWH >0 THEN fishing_effort_kWH / (travel_effort_per_grid_kWH + fishing_effort_kWH)
       ELSE NULL
       END) revenue_cost_ratio
   FROM
@@ -552,7 +553,8 @@ sql <-glue::glue("
     sum_lat_bin,
     sum_lon_bin)
 SELECT
-  *,
+  *
+  EXCEPT(sum_flag, sum_gear, sum_month,sum_lat_bin,sum_lon_bin),
   (revenue_cost_ratio < mean_revenue_cost_ratio - {suspicious_cutff} * sd_revenue_cost_ratio) suspicious_econ
 FROM
   voyage_grids_2
@@ -844,5 +846,14 @@ risky_vessels <- results %>%
   summarize(max_risk_score = max(risk_score)) %>%
   mutate(on_list = ifelse(mmsi %in% thai_mmsi,TRUE,FALSE)) %>%
   arrange(desc(max_risk_score))
+
+sql<-"
+SELECT
+*
+FROM
+`human_rights.poc_voyages_gridded`
+"
+results_gridded <- bq_project_query(project, sql) %>%
+  bq_table_download(max_results = Inf)
 ```
 
