@@ -22,7 +22,7 @@ Let's first look at US trawlers. We do not expect to see any forced labor in thi
 flag_poc <- "USA"
 gear_poc <- "trawlers"
 
-flag_poc <- "THA"
+flag_poc <- "TWN"
 
 sql<-glue::glue("
 #standardSQL
@@ -252,14 +252,14 @@ sql<-"
 #standardSQL
   WITH transshipment_ids AS(
   SELECT
-    transshipment_vessel_id trans_mmsi
+    mmsi trans_mmsi
   FROM
-    `world-fishing-827.gfw_research.encounters_fishing_transshipment_20180327`),
+    `ucsb-gfw:transhipment_high_seas.transshipment_vessels_20170714`),
   bunker_ids AS(
   SELECT
     mmsi bunker_mmsi
   FROM
-    `world-fishing-827.gfw_research.bunker_vessels_11072017` ),
+    `ucsb-gfw.transhipment_high_seas.fish_bunker_vessels_20170703_copy` ),
   fishing_ids AS(
   SELECT
     mmsi fishing_mmsi
@@ -838,14 +838,14 @@ temp_file_name = tempfile(fileext=".csv")
 drive_download(file="Forced Labor Vessel Database",path=temp_file_name,overwrite=TRUE)
 vessel_database <- read_csv(temp_file_name)
 
-thai_mmsi <- vessel_database %>%
-  filter(`Flag vessel flies` == "Thailand") %>%
+risky_mmsi <- vessel_database %>%
+  filter(`Flag vessel flies` == "Taiwan") %>%
   .$MMSI
 
 risky_vessels <- results %>% 
   group_by(mmsi,year) %>% 
   summarize(max_risk_score = max(risk_score)) %>%
-  mutate(on_offender_list = ifelse(mmsi %in% thai_mmsi,TRUE,FALSE)) %>%
+  mutate(on_offender_list = ifelse(mmsi %in% risky_mmsi,TRUE,FALSE)) %>%
   arrange(desc(max_risk_score))
 
 bq_table(project = project,table = "poc_risky_vessels",dataset = "human_rights") %>% 
