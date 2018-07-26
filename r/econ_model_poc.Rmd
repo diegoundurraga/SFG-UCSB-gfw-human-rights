@@ -22,7 +22,7 @@ Let's first look at US trawlers. We do not expect to see any forced labor in thi
 flag_poc <- "USA"
 gear_poc <- "trawlers"
 
-flag_poc <- "TWN"
+flag_poc <- "THA"
 
 sql<-glue::glue("
 #standardSQL
@@ -254,7 +254,7 @@ sql<-"
   SELECT
     mmsi trans_mmsi
   FROM
-    `ucsb-gfw:transhipment_high_seas.transshipment_vessels_20170714`),
+    `ucsb-gfw.transhipment_high_seas.transshipment_vessels_20170714`),
   bunker_ids AS(
   SELECT
     mmsi bunker_mmsi
@@ -278,7 +278,17 @@ sql<-"
     `world-fishing-827.gfw_research.voyage_events_all_vessels_20180307`
   WHERE
     event_type = 'rendezvous'
-    OR event_type = 'coverage gap'),
+    OR event_type = 'coverage gap'
+    AND (vessel_1_id IN (
+      SELECT
+        mmsi
+      FROM
+        `human_rights.poc_vessel_info`))
+    OR (vessel_2_id IN (
+      SELECT
+        mmsi
+      FROM
+        `human_rights.poc_vessel_info`))),
   voyages AS(
   SELECT
     mmsi,
@@ -290,7 +300,37 @@ sql<-"
     `human_rights.poc_voyages_with_anchorages`),
   joined_table AS(
   SELECT
-    *
+    *,
+    (vessel_1_id IN (
+      SELECT
+        trans_mmsi
+      FROM
+        transshipment_ids)) vessel_1_trans,
+    (vessel_2_id IN (
+      SELECT
+        trans_mmsi
+      FROM
+        transshipment_ids)) vessel_2_trans,
+    (vessel_1_id IN (
+      SELECT
+        bunker_mmsi
+      FROM
+        bunker_ids)) vessel_1_bunker,
+    (vessel_2_id IN (
+      SELECT
+        bunker_mmsi
+      FROM
+        bunker_ids)) vessel_2_bunker,
+    (vessel_1_id IN (
+      SELECT
+        fishing_mmsi
+      FROM
+        fishing_ids)) vessel_1_fishing,
+    (vessel_2_id IN (
+      SELECT
+        fishing_mmsi
+      FROM
+        fishing_ids)) vessel_2_fishing
   FROM
     event_table
   JOIN
@@ -300,26 +340,30 @@ sql<-"
       OR event_table.vessel_2_id = voyages.mmsi)
     AND event_table.event_start >voyages.departure_timestamp
     AND event_table.event_end < voyages.arrival_timestamp),
-final_event_table AS(SELECT
-  mmsi,
-  departure_timestamp,
-  departure_port,
-  arrival_timestamp,
-  arrival_port,
-  (CASE
-      WHEN event_type = 'rendezvous' AND (vessel_1_id IN (  SELECT  trans_mmsi  FROM  transshipment_ids) OR vessel_2_id IN (  SELECT  trans_mmsi  FROM  transshipment_ids)) THEN 1
-      ELSE 0 END) encounter_transshipment,
-  (CASE
-      WHEN event_type = 'rendezvous' AND (vessel_1_id IN (  SELECT  bunker_mmsi  FROM  bunker_ids) OR vessel_2_id IN (  SELECT  bunker_mmsi  FROM  bunker_ids)) THEN 1
-      ELSE 0 END) encounter_bunker,
-  (CASE
-      WHEN event_type = 'rendezvous' AND (vessel_1_id IN (  SELECT  fishing_mmsi  FROM  fishing_ids) AND vessel_2_id IN (  SELECT  fishing_mmsi  FROM  fishing_ids)) THEN 1
-      ELSE 0 END) encounter_fishing,
-  (CASE
-      WHEN event_type = 'coverage gap' THEN 1
-      ELSE 0 END) coverage_gap
-FROM
-  joined_table)
+  final_event_table AS(
+  SELECT
+    mmsi,
+    departure_timestamp,
+    departure_port,
+    arrival_timestamp,
+    arrival_port,
+    (CASE
+        WHEN event_type = 'rendezvous' AND (vessel_1_trans OR vessel_2_trans) THEN 1
+        ELSE 0 END) encounter_transshipment,
+    (CASE
+        WHEN event_type = 'rendezvous' AND (vessel_1_bunker OR vessel_2_bunker) THEN 1
+        ELSE 0 END) encounter_bunker,
+    (CASE
+        WHEN event_type = 'rendezvous' AND (vessel_1_fishing AND vessel_2_fishing) THEN 1
+        ELSE 0 END) encounter_fishing,
+    (CASE
+        WHEN event_type = 'rendezvous' AND (NOT(vessel_1_fishing OR vessel_1_trans OR vessel_1_bunker) OR NOT(vessel_2_fishing OR vessel_2_trans OR vessel_2_bunker)) THEN 1
+        ELSE 0 END) encounter_unknown,
+    (CASE
+        WHEN event_type = 'coverage gap' THEN 1
+        ELSE 0 END) coverage_gap
+  FROM
+    joined_table)
 SELECT
   mmsi,
   departure_timestamp,
@@ -329,6 +373,7 @@ SELECT
   SUM(encounter_transshipment) encounters_transshipment,
   SUM(encounter_bunker) encounters_bunker,
   SUM(encounter_fishing) encounters_fishing,
+  SUM(encounter_unknown) encounter_unknown,
   SUM(coverage_gap) coverage_gaps
 FROM
   final_event_table
