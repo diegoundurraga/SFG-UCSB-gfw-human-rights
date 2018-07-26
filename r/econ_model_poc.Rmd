@@ -8,6 +8,7 @@ output: html_notebook
 ```{r}
 library(tidyverse)
 library(bigrquery)
+library(googledrive)
 project <-  "ucsb-gfw"
 ```
 
@@ -844,8 +845,11 @@ thai_mmsi <- vessel_database %>%
 risky_vessels <- results %>% 
   group_by(mmsi,year) %>% 
   summarize(max_risk_score = max(risk_score)) %>%
-  mutate(on_list = ifelse(mmsi %in% thai_mmsi,TRUE,FALSE)) %>%
+  mutate(on_offender_list = ifelse(mmsi %in% thai_mmsi,TRUE,FALSE)) %>%
   arrange(desc(max_risk_score))
+
+bq_table(project = project,table = "poc_risky_vessels",dataset = "human_rights") %>% 
+  bq_table_upload(values = risky_vessels)
 
 sql<-"
 SELECT
