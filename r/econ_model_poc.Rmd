@@ -900,15 +900,8 @@ risky_vessels <- results %>%
   arrange(desc(max_risk_score))
 
 bq_table(project = project,table = "poc_risky_vessels",dataset = "human_rights") %>% 
+  bq_table_delete()
+bq_table(project = project,table = "poc_risky_vessels",dataset = "human_rights") %>% 
   bq_table_upload(values = risky_vessels)
-
-sql<-"
-SELECT
-*
-FROM
-`human_rights.poc_voyages_gridded`
-"
-results_gridded <- bq_project_query(project, sql) %>%
-  bq_table_download(max_results = Inf)
 ```
 
