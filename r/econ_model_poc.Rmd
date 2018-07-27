@@ -475,6 +475,7 @@ sql<-glue::glue("
     voyage_info.arrival_port arrival_port,
     voyage_info.arrival_timestamp arrival_timestamp,
     (NOT ping_info.eez_iso3 IS NULL AND NOT ping_info.eez_iso3 = voyage_info.flag AND ping_info.nnet_hours > 0) fishing_foreign_eez,
+    (CASE WHEN (NOT ping_info.eez_iso3 IS NULL AND NOT ping_info.eez_iso3 = voyage_info.flag AND ping_info.nnet_hours > 0) THEN ping_info.eez_iso3 ELSE NULL END) fishing_foreign_eez_iso3,
     (ping_info.eez_iso3 IS NULL AND ping_info.nnet_hours > 0) fishing_high_seas,
     (ping_info.in_ntz AND ping_info.nnet_hours > 0) fishing_ntz
   FROM
@@ -890,7 +891,7 @@ drive_download(file="Forced Labor Vessel Database",path=temp_file_name,overwrite
 vessel_database <- read_csv(temp_file_name)
 
 risky_mmsi <- vessel_database %>%
-  filter(`Flag vessel flies` == "Taiwan") %>%
+  filter(`Flag vessel flies` == "Thailand") %>%
   .$MMSI
 
 risky_vessels <- results %>% 
