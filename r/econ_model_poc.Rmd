@@ -277,18 +277,18 @@ sql<-"
   FROM
     `world-fishing-827.gfw_research.voyage_events_all_vessels_20180307`
   WHERE
-    event_type = 'rendezvous'
-    OR event_type = 'coverage gap'
-    AND (vessel_1_id IN (
-      SELECT
-        mmsi
-      FROM
-        `human_rights.poc_vessel_info`))
-    OR (vessel_2_id IN (
-      SELECT
-        mmsi
-      FROM
-        `human_rights.poc_vessel_info`))),
+    (event_type = 'rendezvous'
+      OR event_type = 'coverage gap')
+    AND ((vessel_1_id IN (
+        SELECT
+          mmsi
+        FROM
+          `human_rights.poc_vessel_info`))
+      OR (vessel_2_id IN (
+        SELECT
+          mmsi
+        FROM
+          `human_rights.poc_vessel_info`)))),
   voyages AS(
   SELECT
     mmsi,
@@ -299,6 +299,18 @@ sql<-"
   FROM
     `human_rights.poc_voyages_with_anchorages`),
   joined_table AS(
+  SELECT
+    *
+  FROM
+    event_table
+  JOIN
+    voyages
+  ON
+    (event_table.vessel_1_id = voyages.mmsi
+      OR event_table.vessel_2_id = voyages.mmsi)
+    AND event_table.event_start >voyages.departure_timestamp
+    AND event_table.event_end < voyages.arrival_timestamp),
+  joined_table2 AS(
   SELECT
     *,
     (vessel_1_id IN (
@@ -332,14 +344,7 @@ sql<-"
       FROM
         fishing_ids)) vessel_2_fishing
   FROM
-    event_table
-  JOIN
-    voyages
-  ON
-    (event_table.vessel_1_id = voyages.mmsi
-      OR event_table.vessel_2_id = voyages.mmsi)
-    AND event_table.event_start >voyages.departure_timestamp
-    AND event_table.event_end < voyages.arrival_timestamp),
+    joined_table ),
   final_event_table AS(
   SELECT
     mmsi,
@@ -363,7 +368,7 @@ sql<-"
         WHEN event_type = 'coverage gap' THEN 1
         ELSE 0 END) coverage_gap
   FROM
-    joined_table)
+    joined_table2)
 SELECT
   mmsi,
   departure_timestamp,
