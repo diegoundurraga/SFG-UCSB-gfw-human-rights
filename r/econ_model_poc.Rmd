@@ -34,7 +34,7 @@ best_label,
 best_tonnage,
 best_length,
 best_engine_power
-FROM `world-fishing-827.gfw_research.vessel_info_20180518`
+FROM `world-fishing-827.gfw_research.vessel_info_20180726`
 WHERE
 best_flag = '{flag_poc}'
 # AND best_label = '{gear_poc}'")
