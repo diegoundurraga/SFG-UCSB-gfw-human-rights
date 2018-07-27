@@ -37,6 +37,7 @@ best_engine_power
 FROM `world-fishing-827.gfw_research.vessel_info_20180726`
 WHERE
 best_flag = '{flag_poc}'
+AND on_fishing_list_nn
 # AND best_label = '{gear_poc}'")
 
 # Run new query. Delete old table, upload new one
