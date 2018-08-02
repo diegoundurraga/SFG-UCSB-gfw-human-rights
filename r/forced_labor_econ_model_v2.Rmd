@@ -1,0 +1,130 @@
+---
+title: "Forced Labor Economic Model"
+author: "Sustainable Fisheries Group, UCSB"
+date: "August 3, 2018"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+# Goal
+* Identify vessels that routinely behave in a way that indicates lower labor cost than other similar vessels
+
+# Assumptions
+* For similar vessels in a given time period (monthly), the fishery shares a common stock
+* Individual vessels are profit maximizing, but for a given fishery (flag and gear type) and time period (monthly), all points globally have a spatially uniform average profitability. Points close to shore will have smaller levels of the stock, but are less expensive to travel to. Points further away will have higher levels of the stock, but are more expensive to travel to.
+* Based on certain vessel characteristics (engine power, length, and tonnage), vessel operators will exert a certain travel time and fishing effort that gives them the same profitability as other vessels in the fishery.
+* All similar vessels have the same variable labor cost, variable fuel cost, and variable subsidy benefits when not employing forced labor. These variable costs and benefits are assumed to be linearly proportional to both travel effort and fishing effort.
+* Vessels employing forced labor will have lower variable labor costs
+
+
+# Equations
+
+Average trip revenue, $\overline{R}$ is given as follows, where $q$ is catchability, $B_i$ is the biomass in each area fished, $\overline{E}$ is the average fishing effort across all areas fished, and $p$ is price.
+
+$$\overline{R} = q B_i \overline{E} p$$
+
+Average trip cost, $\overline{C}$, is given as follows, where $T$ is the travel effort for the entire trip, $c_{fuel}$ is the variable fuel cost, $c_{labor}$ is the variable labor cost, and $s$ is the variable subsidy cost: 
+
+$$\overline{C} = (T + \overline{E})(c_{fuel} + c_{labor} - s)$$
+
+Combining the equations for $\overline{R}$ and $\overline{C}$, get we the average trip profit equation:
+
+$$ \overline{\Pi} =  q B_i \overline{E} p -  (T + \overline{E})(c_{fuel} + c_{labor} - s)$$
+
+Solving for $B_i$ yields the following:
+
+$$B_i = \frac{\overline{\Pi} + (T + \overline{E})(c_{fuel} + c_{labor} - s)}{q   \overline{E} p} $$
+
+Next, we denote $\widetilde{\Pi}$ as the profit of vessels using forced labor. We can therefore write the following equation, where $\tilde{c_{labor}}$ is the cost of forced labor, which will be lower than $c_{labor}$.
+
+$$ \widetilde{\Pi} =  q B_i \overline{E} p -  (T + \overline{E})(c_{fuel} + \tilde{c_{labor}} - s)$$
+
+Next, we can plug in $B_i$ to this equation:
+
+$$ \widetilde{\Pi} =  q \overline{E} p \left(\frac{\overline{\Pi} + (T + \overline{E})(c_{fuel} + c_{labor} - s)}{q   \overline{E} p}\right)-  (T + \overline{E})(c_{fuel} + \tilde{c_{labor}} - s)$$
+
+Which simplifies as follows:
+
+$$ \widetilde{\Pi} =  \overline{\Pi} + (T + \overline{E})(c_{labor} - \tilde{c_{labor}})$$
+Since $c_{labor}$ will always be greater than $\tilde{c_{labor}}$, and vessels are assumed to be profit maximizing, vessels using forced labor will therefore maximize $T + \overline{E}$ and have longer total trip duration compared to other similar vessels.
+
+# Example
+
+We use the following linear regression to predict total trip duration as a function of vessel characteristics:
+
+$$time\_at\_sea\_hours \sim length + tonnage + engine\_power + factor(gear) + factor(year) + factor(month)$$
+
+The training data set is composed of all Thai-flagged fishing trips from 2012-2017. Importantly, we exclude any vessels from the training set that are known to be offenders. We use this model to predict total time at sea for all fishing trips, including those known to be offenders. The observed versus predicted model relationship is visualized as follows. Note that all known-offenders are significant outliers from the model, and exhibit higher than expected total time at sea.
+
+```{r echo=FALSE, message = FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(fuzzyjoin)
+results <- read_csv("thai_poc_voyages.csv",col_types = cols())
+#results <- read_csv("taiwan_poc_voyages.csv")
+
+country <- "Thailand"
+#country <- "Taiwan"
+
+vessel_database <- read_csv("vessel_database.csv",col_types = cols())
+
+risky_mmsi <- vessel_database %>% 
+  filter((flag_vessel_flies == country | owner_flag == country) & (known_offender == 1 | possible_offender==1))  %>%
+  mutate(known_offender = 1,
+         mmsi = as.numeric(mmsi),
+         year = str_extract(date_range_end,"[0-9]{4}") %>%
+           as.numeric()) %>% 
+  dplyr::select(mmsi,known_offender,year,gears_used)%>%
+  filter(!is.na(mmsi))
+
+results_processed <- results %>%
+  fuzzy_left_join(risky_mmsi,
+                  by=c("mmsi" = "mmsi","year" = "year"),
+                  match_fun = list(`==`, `<`)) %>%
+  mutate(known_offender = case_when(known_offender == 1 ~ "Yes",
+                                    TRUE ~ "No"),
+         month = lubridate::month(departure_date),
+         departure_country = str_sub(departure_port, start= -3),
+         arrival_country = str_sub(arrival_port, start= -3),
+         travel_hours = time_at_sea_hours - fishing_hours,
+         departure_country_foreign = ifelse(departure_country=="THA",1,0),
+         arrival_country_foreign = ifelse(arrival_country=="THA",1,0)) %>%
+  rename(mmsi = mmsi.x,
+         year = year.x) %>%
+  filter(fishing_hours > 0)
+
+# Train the model using only "clean" boats
+training_data <- results_processed %>%
+              filter(known_offender != "Yes")
+
+model <- lm(time_at_sea_hours ~ length + tonnage + engine_power + factor(gear) + factor(year) + factor(month),data = training_data)
+
+results_processed <- cbind(results_processed,predict(model,interval="confidence",level=0.997,newdata = results_processed)) %>%
+  mutate(Outlier = case_when(time_at_sea_hours > upr ~ "Yes",
+                             TRUE ~ "No"))
+
+results_processed %>%
+  arrange(known_offender) %>%
+  mutate(`Known\nAbuses`=factor(known_offender)) %>%
+  ggplot(aes(x=fit,y=time_at_sea_hours)) +
+  geom_point(aes(fill = `Known\nAbuses`),shape=21,size=3,alpha=0.8) +
+  viridis::scale_fill_viridis(discrete = TRUE,option = "C",begin = 0.15,end =0.9) +
+  #scale_shape_manual(values=c(21,25)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size=15),
+        axis.title.x = element_text(size=15),
+        axis.title.y = element_text(size=15),
+        axis.text.x = element_text(size=15),
+        axis.text.y = element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=15))+
+  geom_ribbon(aes(ymin=lwr,ymax=upr),alpha=0.25)+ 
+  geom_abline(slope=1,intercept=0,lwd=1.5) +
+  ylab("Observed total trip duration\n[hours]\n") +
+  xlab("\nPredicted total trip duration\n[hours]") +
+  ggtitle(paste0("Predicted and observed total trip duration\nfor the Thai fishing fleet: 2012-2017\nR-squared: ",signif(broom::glance(model)$r.squared,3)))
+```
+
