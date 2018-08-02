@@ -1,0 +1,102 @@
+---
+title: "Forced labor expert survey design"
+output: html_notebook
+---
+
+# Setup
+
+```{r}
+library(tidyverse)
+library(bigrquery)
+project <-  "ucsb-gfw"
+```
+
+# Figure out possible combinations
+
+```{r}
+sql <-
+"
+#standardSQL
+SELECT
+best_flag,
+inferred_label,
+SUM(active_hours) active_hours
+FROM `world-fishing-827.gfw_research.vessel_info_20180726`
+WHERE
+on_fishing_list_nn
+GROUP BY
+best_flag,
+inferred_label
+ORDER BY active_hours DESC
+"
+
+# Run new query. Delete old table, upload new one
+bq_table(project = project,table = "vessel_combinations",dataset = "human_rights") %>% 
+  bq_table_delete()
+
+bq_project_query(project,sql, destination_table = bq_table(project = project,table = "vessel_combinations",dataset = "human_rights"),use_legacy_sql = FALSE, allowLargeResults = TRUE)
+```
+
+Visualize data
+
+```{r}
+sql<-"
+SELECT
+*
+FROM
+`human_rights.vessel_combinations`
+"
+vessel_combinations <- bq_project_query(project, sql) %>%
+  bq_table_download(max_results = Inf)
+
+good_gear_types <- c(
+  "trawlers",
+  "trollers",
+  "driftnets",
+  "other_seines",
+  "set_gillnets",
+  "squid_jigger",
+  "other_fishing",
+  "pole_and_line",
+  "set_longlines",
+  "dredge_fishing",
+  "pots_and_traps",
+  "tuna_purse_seines",
+  "drifting_longlines",
+  "other_purse_seines"
+)
+
+unique_vessel_combinations <- vessel_combinations %>%
+  filter(!is.na(active_hours)) %>%
+  mutate(gear = case_when(inferred_label %in% good_gear_types ~ inferred_label,
+                          TRUE ~ "unknown"),
+         flag = case_when(stringr::str_length(best_flag) == 3 ~ best_flag,
+                          TRUE ~ "unknown")) %>%
+  distinct(flag, gear)
+```
+
+1095 unique flag/gear combos
+Binary - suspected transshipment
+Binary - fishing in foreign EEZ
+Binary - port of convenience
+3 categories - time at sea (comparable to others, outlier, extreme outlier)
+3 categories - hours fishing per day (comparable to others, outlier, extreme outlier)
+Total combos: 78,840
+
+```{r}
+library(AlgDesign)
+
+#https://stackoverflow.com/questions/5044876/how-to-create-a-fractional-factorial-design-in-r
+
+levels.design = c(5,5,2,2,3,3)
+f.design <- gen.factorial(levels.design,center=FALSE)
+
+fract.design <- optFederov(
+        data=f.design,
+        nTrials=sum(levels.design),
+        approximate=TRUE)
+
+library(DoE.base)
+fract.design <- oa.design(nlevels=levels.design)
+```
+
