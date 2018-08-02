@@ -9,6 +9,9 @@ output: html_notebook
 library(tidyverse)
 library(bigrquery)
 library(googledrive)
+library(lubridate)
+library(janitor)
+library(fuzzyjoin)
 project <-  "ucsb-gfw"
 ```
 
@@ -170,6 +173,8 @@ sql <-"
     anchorages.mmsi mmsi,
     anchorages.flag flag,
     anchorages.gear gear,
+    anchorages.tonnage tonnage,
+    anchorages.length length,
     anchorages.engine_power engine_power,
     anchorages.departure_timestamp departure_timestamp,
     anchorages.arrival_timestamp arrival_timestamp,
@@ -180,6 +185,8 @@ sql <-"
       anchor1.mmsi mmsi,
       anchor2.best_flag flag,
       anchor2.best_label gear,
+      anchor2.best_tonnage tonnage,
+      anchor2.best_length length,
       anchor2.best_engine_power engine_power,
       anchor2.port_exit_timestamp departure_timestamp,
       anchor1.port_entry_timestamp arrival_timestamp,
@@ -222,6 +229,8 @@ sql <-"
             year year_info,
             best_flag,
             best_label,
+            best_tonnage,
+            best_length,
             best_engine_power
           FROM
             `human_rights.poc_vessel_info`) ves_info
@@ -446,14 +455,7 @@ sql<-glue::glue("
       `human_rights.poc_voyages_with_anchorages`)),
   voyage_info AS(
   SELECT
-    mmsi,
-    flag,
-    departure_port,
-    departure_timestamp,
-    arrival_timestamp,
-    arrival_port,
-    gear,
-    engine_power
+    *
   FROM
     `ucsb-gfw.human_rights.poc_voyages_with_anchorages`),
   ais_info AS(
@@ -461,12 +463,14 @@ sql<-glue::glue("
     ping_info.mmsi mmsi,
     voyage_info.flag flag,
     voyage_info.gear gear,
+    voyage_info.length length,
+    voyage_info.tonnage tonnage,
     voyage_info.engine_power engine_power,
     DATE_TRUNC(DATE(ping_info.start_timestamp), MONTH) month,
     DATE_TRUNC(DATE(ping_info.start_timestamp), DAY) day,
     ping_info.start_lat start_lat,
     ping_info.start_lon start_lon,
-    ping_info.start_timestamp,
+    ping_info.start_timestamp start_timestamp, 
     ping_info.hours hours,
     ping_info.nnet_hours nnet_hours,
     ping_info.avg_distance_km avg_distance_km,
@@ -511,6 +515,8 @@ sql <-glue::glue("
     gear,
     flag,
     month,
+    length,
+    tonnage,
     engine_power,
     FLOOR(start_lat/{grid_size}) * {grid_size} lat_bin,
     FLOOR(start_lon/{grid_size}) * {grid_size} lon_bin,
@@ -536,6 +542,8 @@ sql <-glue::glue("
     gear,
     flag,
     month,
+    length,
+    tonnage,
     engine_power,
     lat_bin,
     lon_bin,
@@ -635,6 +643,9 @@ sql<-glue::glue("
     mmsi,
     gear,
     flag,
+    length,
+    tonnage,
+    engine_power,
     EXTRACT(YEAR
     FROM
       departure_timestamp) AS year,
@@ -664,6 +675,9 @@ sql<-glue::glue("
     mmsi,
     gear,
     flag,
+    length,
+    tonnage,
+    engine_power,
     departure_port,
     departure_timestamp,
     departure_date,
@@ -809,6 +823,9 @@ sql<-glue::glue("
     mmsi,
     gear,
     flag,
+    length,
+    tonnage,
+    engine_power,
     year,
     departure_port,
     departure_date,
@@ -886,23 +903,77 @@ FROM
 results <- bq_project_query(project, sql) %>%
   bq_table_download(max_results = Inf)
 
+#write_csv(results, "thai_poc_voyages.csv")
+write_csv(results, "taiwan_poc_voyages.csv")
+
+results <- read_csv("thai_poc_voyages.csv")
+#results <- read_csv("taiwan_poc_voyages.csv")
+
+country <- "Thailand"
+#country <- "Taiwan"
+
 temp_file_name = tempfile(fileext=".csv")
 drive_download(file="Forced Labor Vessel Database",path=temp_file_name,overwrite=TRUE)
-vessel_database <- read_csv(temp_file_name)
+vessel_database <- read_csv(temp_file_name) %>%
+  clean_names()
 
-risky_mmsi <- vessel_database %>%
-  filter(`Flag vessel flies` == "Thailand") %>%
-  .$MMSI
+write_csv(vessel_database, "vessel_database.csv")
+vessel_database <- read_csv("vessel_database.csv")
+risky_mmsi <- vessel_database %>% 
+  filter((flag_vessel_flies == country | owner_flag == country) & (known_offender == 1 | possible_offender==1))  %>%
+  mutate(known_offender = 1,
+         mmsi = as.numeric(mmsi),
+         year = str_extract(date_range_end,"[0-9]{4}") %>%
+           as.numeric()) %>% 
+  dplyr::select(mmsi,known_offender,year,gears_used)%>%
+  filter(!is.na(mmsi))
 
-risky_vessels <- results %>% 
-  group_by(mmsi,year) %>% 
-  summarize(max_risk_score = max(risk_score)) %>%
-  mutate(on_offender_list = ifelse(mmsi %in% risky_mmsi,TRUE,FALSE)) %>%
-  arrange(desc(max_risk_score))
+results_processed <- results %>%
+  fuzzy_left_join(risky_mmsi,
+                  by=c("mmsi" = "mmsi","year" = "year"),
+                  match_fun = list(`==`, `<`)) %>%
+  mutate(known_offender = case_when(known_offender == 1 ~ "Yes",
+                                    TRUE ~ "No"),
+         month = lubridate::month(departure_date),
+         departure_country = str_sub(departure_port, start= -3),
+         arrival_country = str_sub(arrival_port, start= -3),
+         travel_hours = time_at_sea_hours - fishing_hours,
+         departure_country_foreign = ifelse(departure_country=="THA",1,0),
+         arrival_country_foreign = ifelse(arrival_country=="THA",1,0)) %>%
+  rename(mmsi = mmsi.x,
+         year = year.x) %>%
+  filter(fishing_hours > 0)
 
-bq_table(project = project,table = "poc_risky_vessels",dataset = "human_rights") %>% 
-  bq_table_delete()
-bq_table(project = project,table = "poc_risky_vessels",dataset = "human_rights") %>% 
-  bq_table_upload(values = risky_vessels)
+# Train the model using only "clean" boats
+training_data <- results_processed %>%
+              filter(known_offender != "Yes")
+
+model <- lm(time_at_sea_hours ~ length + tonnage + engine_power + factor(gear) + factor(year) + factor(month),data = training_data)
+
+results_processed <- cbind(results_processed,predict(model,interval="confidence",level=0.997,newdata = results_processed)) %>%
+  mutate(Outlier = case_when(time_at_sea_hours > upr ~ "Yes",
+                             TRUE ~ "No"))
+
+results_processed %>%
+  arrange(known_offender) %>%
+  mutate(`Known\nAbuses`=factor(known_offender)) %>%
+  ggplot(aes(x=fit,y=time_at_sea_hours)) +
+  geom_point(aes(fill = `Known\nAbuses`),shape=21,size=3,alpha=0.8) +
+  viridis::scale_fill_viridis(discrete = TRUE,option = "C",begin = 0.15,end =0.9) +
+  #scale_shape_manual(values=c(21,25)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size=15),
+        axis.title.x = element_text(size=15),
+        axis.title.y = element_text(size=15),
+        axis.text.x = element_text(size=15),
+        axis.text.y = element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=15))+
+  geom_ribbon(aes(ymin=lwr,ymax=upr),alpha=0.25)+ 
+  geom_abline(slope=1,intercept=0,lwd=1.5) +
+  ylab("Observed total trip duration\n[hours]\n") +
+  xlab("\nPredicted total trip duration\n[hours]") +
+  ggtitle(paste0("Predicted and observed total trip duration\nfor the Thai fishing fleet: 2012-2017\nR-squared: ",signif(broom::glance(model)$r.squared,3)))
 ```
-
