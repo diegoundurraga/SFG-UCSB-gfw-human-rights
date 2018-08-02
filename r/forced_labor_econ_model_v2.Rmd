@@ -23,30 +23,30 @@ Average trip revenue, $\overline{R}$ is given as follows, where $q$ is catchabil
 
 $$\overline{R} = q B_i \overline{E} p$$
 
-Average trip cost, $\overline{C}$, is given as follows, where $T$ is the travel effort for the entire trip, $c_{fuel}$ is the variable fuel cost, $c_{labor}$ is the variable labor cost, and $s$ is the variable subsidy cost: 
+Average trip cost, $\overline{C}$, is given as follows, where $T_i$ is the travel effort to reach fishing ground $i$, $c_{fuel}$ is the variable fuel cost, $c_{labor}$ is the variable labor cost, and $s$ is the variable subsidy cost: 
 
-$$\overline{C} = (T + \overline{E})(c_{fuel} + c_{labor} - s)$$
+$$\overline{C} = (T_i + \overline{E})(c_{fuel} + c_{labor} - s)$$
 
 Combining the equations for $\overline{R}$ and $\overline{C}$, get we the average trip profit equation:
 
-$$ \overline{\Pi} =  q B_i \overline{E} p -  (T + \overline{E})(c_{fuel} + c_{labor} - s)$$
+$$ \overline{\Pi} =  q B_i \overline{E} p -  (T_i + \overline{E})(c_{fuel} + c_{labor} - s)$$
 
 Solving for $B_i$ yields the following:
 
-$$B_i = \frac{\overline{\Pi} + (T + \overline{E})(c_{fuel} + c_{labor} - s)}{q   \overline{E} p} $$
+$$B_i = \frac{\overline{\Pi} + (T_i + \overline{E})(c_{fuel} + c_{labor} - s)}{q   \overline{E} p} $$
 
-Next, we denote $\widetilde{\Pi}$ as the profit of vessels using forced labor. We can therefore write the following equation, where $\tilde{c_{labor}}$ is the cost of forced labor, which will be lower than $c_{labor}$.
+This demonstrates that biomass will be higher in areas with higher travel effort. Next, we denote $\widetilde{\Pi}$ as the profit of vessels using forced labor. We can therefore write the following equation, where $\tilde{c_{labor}}$ is the cost of forced labor, which will be lower than $c_{labor}$.
 
-$$ \widetilde{\Pi} =  q B_i \overline{E} p -  (T + \overline{E})(c_{fuel} + \tilde{c_{labor}} - s)$$
+$$ \widetilde{\Pi} =  q B_i \overline{E} p -  (T_i + \overline{E})(c_{fuel} + \tilde{c_{labor}} - s)$$
 
 Next, we can plug in $B_i$ to this equation:
 
-$$ \widetilde{\Pi} =  q \overline{E} p \left(\frac{\overline{\Pi} + (T + \overline{E})(c_{fuel} + c_{labor} - s)}{q   \overline{E} p}\right)-  (T + \overline{E})(c_{fuel} + \tilde{c_{labor}} - s)$$
+$$ \widetilde{\Pi} =  q \overline{E} p \left(\frac{\overline{\Pi} + (T_i + \overline{E})(c_{fuel} + c_{labor} - s)}{q   \overline{E} p}\right)-  (T_i + \overline{E})(c_{fuel} + \tilde{c_{labor}} - s)$$
 
 Which simplifies as follows:
 
-$$ \widetilde{\Pi} =  \overline{\Pi} + (T + \overline{E})(c_{labor} - \tilde{c_{labor}})$$
-Since $c_{labor}$ will always be greater than $\tilde{c_{labor}}$, and vessels are assumed to be profit maximizing, vessels using forced labor will therefore maximize $T + \overline{E}$ and have longer total trip duration compared to other similar vessels.
+$$ \widetilde{\Pi} =  \overline{\Pi} + (T_i + \overline{E})(c_{labor} - \tilde{c_{labor}})$$
+Since $c_{labor}$ will always be greater than $\tilde{c_{labor}}$, and vessels are assumed to be profit maximizing, vessels using forced labor will therefore maximize $T_i + \overline{E}$ and have longer total trip duration compared to other similar vessels.
 
 # Example
 
