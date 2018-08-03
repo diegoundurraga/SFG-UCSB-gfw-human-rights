@@ -108,14 +108,46 @@ des <- dcm.design(levels.design,
 
 saveRDS(des,"blocked.fract.design.Rdata")
 
-# Make dummy data
-design <- des$levels %>%
-  group_by(card) %>%
-  mutate(response = sample(c(1,0), 2,TRUE))
-
 # Test model using dummy data
 library(survival)
-clogit(response ~ X1*X2*X3*X4*X5 + strata(card), data = design)
+
+# Make random dummy data
+design <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = sample(c(1,0), 2,FALSE)) %>%
+  ungroup()
+
+clogit(response ~ X1 + X2 + X3 + X4 + X5 + strata(card), data = design)
+
+# Skew data to X1
+design1 <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = case_when(X1[1] == 1 & X1[2] == 2 ~ sample(c(1,0),2,FALSE,prob = c(0.7,0.3)),
+                              X1[1] == 2 & X1[1] == 1 ~ sample(c(0,1),2,FALSE,prob = c(0.3,0.7)),
+                              TRUE ~ sample(c(1,0), 2,FALSE))) %>%
+  ungroup()
+
+clogit(response ~ X1 + X2 + X3 + X4 + X5 + strata(card), data = design1)
+
+# Skew data to X2
+design2 <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = case_when(X2[1] == 1 & X2[2] == 2 ~ sample(c(1,0),2,FALSE,prob = c(0.7,0.3)),
+                              X2[1] == 2 & X2[1] == 1 ~ sample(c(0,1),2,FALSE,prob = c(0.3,0.7)),
+                              TRUE ~ sample(c(1,0), 2,FALSE))) %>%
+  ungroup()
+
+clogit(response ~ X1 + X2 + X3 + X4 + X5 + strata(card), data = design2)
+
+# Skew data to interaction of X1 and X2
+design12 <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = case_when(X1[1] == 1 & X2[1] == 1 & X1[2] == 2 & X2[2] == 2 ~ sample(c(1,0),2,FALSE,prob = c(0.7,0.3)),
+                              X1[2] == 1 & X2[2] == 1 & X1[1] == 2 & X2[1] == 2 ~ sample(c(0,1),2,FALSE,prob = c(0.7,0.3)),
+                              TRUE ~ sample(c(1,0), 2,FALSE))) %>%
+  ungroup()
+
+clogit(response ~ X1*X2 + X3 + X4 + X5 + strata(card), data = design12)
 ```
 
 
