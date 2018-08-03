@@ -25,7 +25,7 @@ Let's first look at US trawlers. We do not expect to see any forced labor in thi
 flag_poc <- "USA"
 gear_poc <- "trawlers"
 
-flag_poc <- "THA"
+#flag_poc <- "THA"
 
 sql<-glue::glue("
 #standardSQL
@@ -904,14 +904,16 @@ results <- bq_project_query(project, sql) %>%
   bq_table_download(max_results = Inf)
 
 #write_csv(results, "thai_poc_voyages.csv")
-write_csv(results, "taiwan_poc_voyages.csv")
+#write_csv(results, "taiwan_poc_voyages.csv")
+write_csv(results, "usa_poc_voyages.csv")
 
-results <- read_csv("thai_poc_voyages.csv")
+#results <- read_csv("thai_poc_voyages.csv")
 #results <- read_csv("taiwan_poc_voyages.csv")
+results <- read_csv("usa_poc_voyages.csv")
 
-country <- "Thailand"
+#country <- "Thailand"
 #country <- "Taiwan"
-
+country <- "United States"
 temp_file_name = tempfile(fileext=".csv")
 drive_download(file="Forced Labor Vessel Database",path=temp_file_name,overwrite=TRUE)
 vessel_database <- read_csv(temp_file_name) %>%
@@ -942,7 +944,8 @@ results_processed <- results %>%
          arrival_country_foreign = ifelse(arrival_country=="THA",1,0)) %>%
   rename(mmsi = mmsi.x,
          year = year.x) %>%
-  filter(fishing_hours > 0)
+  filter(fishing_hours > 0) %>%
+  filter(departure_port == "DUTCH HARBOR,USA")
 
 # Train the model using only "clean" boats
 training_data <- results_processed %>%
@@ -975,5 +978,5 @@ results_processed %>%
   geom_abline(slope=1,intercept=0,lwd=1.5) +
   ylab("Observed total trip duration\n[hours]\n") +
   xlab("\nPredicted total trip duration\n[hours]") +
-  ggtitle(paste0("Predicted and observed total trip duration\nfor the Thai fishing fleet: 2012-2017\nR-squared: ",signif(broom::glance(model)$r.squared,3)))
+  ggtitle(paste0("Predicted and observed total trip duration\nfor the US Dutch Harbor trawl fleet in 2012- 2016\nR-squared: ",signif(broom::glance(model)$r.squared,3)))
 ```
