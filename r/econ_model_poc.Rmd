@@ -433,6 +433,8 @@ sql<-glue::glue("
     hours,
     avg_distance_km,
     eez_iso3,
+    distance_from_shore,
+    distance_from_port,
     (CASE
         WHEN nnet_score = 1 AND NOT (distance_from_shore < 1000 AND implied_speed < 1) THEN hours
         ELSE 0 END) nnet_hours,
@@ -474,6 +476,8 @@ sql<-glue::glue("
     ping_info.hours hours,
     ping_info.nnet_hours nnet_hours,
     ping_info.avg_distance_km avg_distance_km,
+    ping_info.distance_from_shore distance_from_shore,
+    ping_info.distance_from_port distance_from_port,
     voyage_info.departure_port departure_port,
     voyage_info.departure_timestamp departure_timestamp,
     voyage_info.arrival_port arrival_port,
@@ -530,6 +534,8 @@ sql <-glue::glue("
     SUM(hours - nnet_hours) * engine_power travel_effort_kWH,
     SUM(nnet_hours) * engine_power fishing_effort_kWH,
     SUM(avg_distance_km) distance_km,
+    MAX(distance_from_shore) max_distance_from_shore_m,
+    MAX(distance_from_port) max_distance_from_port_m,
     (SUM(CASE WHEN fishing_foreign_eez THEN 1 ELSE 0 END) > 0) fishing_foreign_eez,
     (SUM(CASE WHEN fishing_high_seas THEN 1 ELSE 0 END) > 0) fishing_high_seas,
     (SUM(CASE WHEN fishing_ntz THEN 1 ELSE 0 END) > 0) fishing_ntz
@@ -657,6 +663,8 @@ sql<-glue::glue("
     SUM(hours) time_at_sea_hours,
     SUM(fishing_hours) fishing_hours,
     SUM(distance_km) distance_traveled_km,
+    MAX(max_distance_from_shore_m) max_distance_from_shore_m,
+    MAX(max_distance_from_port_m) max_distance_from_port_m,
     (SUM(CASE
           WHEN fishing_foreign_eez THEN 1
           ELSE 0 END) > 0) fishing_foreign_eez,
@@ -835,6 +843,8 @@ sql<-glue::glue("
     time_at_sea_hours,
     fishing_hours,
     distance_traveled_km,
+    max_distance_from_shore_m,
+    max_distance_from_port_m,
     mean_daily_fishing_hours,
     fraction_suspicious_econ,
     encounters_transshipment,
@@ -944,14 +954,13 @@ results_processed <- results %>%
          arrival_country_foreign = ifelse(arrival_country=="THA",1,0)) %>%
   rename(mmsi = mmsi.x,
          year = year.x) %>%
-  filter(fishing_hours > 0) %>%
-  filter(departure_port == "DUTCH HARBOR,USA")
+  filter(fishing_hours > 0)
 
 # Train the model using only "clean" boats
 training_data <- results_processed %>%
               filter(known_offender != "Yes")
 
-model <- lm(time_at_sea_hours ~ length + tonnage + engine_power + factor(gear) + factor(year) + factor(month),data = training_data)
+model <- lm(max_distance_from_port_km ~ length + tonnage + engine_power + factor(gear) + factor(year) + factor(month),data = training_data)
 
 results_processed <- cbind(results_processed,predict(model,interval="confidence",level=0.997,newdata = results_processed)) %>%
   mutate(Outlier = case_when(time_at_sea_hours > upr ~ "Yes",
@@ -960,7 +969,7 @@ results_processed <- cbind(results_processed,predict(model,interval="confidence"
 results_processed %>%
   arrange(known_offender) %>%
   mutate(`Known\nAbuses`=factor(known_offender)) %>%
-  ggplot(aes(x=fit,y=time_at_sea_hours)) +
+  ggplot(aes(x=fit,y=max_distance_from_port_km)) +
   geom_point(aes(fill = `Known\nAbuses`),shape=21,size=3,alpha=0.8) +
   viridis::scale_fill_viridis(discrete = TRUE,option = "C",begin = 0.15,end =0.9) +
   #scale_shape_manual(values=c(21,25)) +
@@ -976,7 +985,6 @@ results_processed %>%
         legend.title=element_text(size=15))+
   geom_ribbon(aes(ymin=lwr,ymax=upr),alpha=0.25)+ 
   geom_abline(slope=1,intercept=0,lwd=1.5) +
-  ylab("Observed total trip duration\n[hours]\n") +
-  xlab("\nPredicted total trip duration\n[hours]") +
-  ggtitle(paste0("Predicted and observed total trip duration\nfor the US Dutch Harbor trawl fleet in 2012- 2016\nR-squared: ",signif(broom::glance(model)$r.squared,3)))
+  ylab("Observed maximum distance from port\n[m]\n") +
+  xlab("\nPredicted maximum distance from port\n[m]")
 ```
