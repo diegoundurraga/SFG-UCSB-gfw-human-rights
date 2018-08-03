@@ -130,9 +130,9 @@ results_processed %>%
   ggtitle(paste0("Predicted and observed total trip duration\nfor the Thai fishing fleet: 2012-2016\nR-squared: ",signif(broom::glance(model)$r.squared,3)))
 ```
 
-## United States - Dutch Harbor trawlers
+## United States - Dutch Harbor
 
-Next, let's try the United States Dutch Harbor trawler fleet, which we assume has little or no forced labor. For trawlers, this port has the most trips of any port. We can see that the trips are more tightly grouped, but still with numerous outliers.
+Next, let's try the United States Dutch Harbor fleet, which we assume has little or no forced labor. This port has the most trips of any port in the US. We can see that the trips are more tightly grouped, but still with numerous outliers.
 
 ```{r echo=FALSE, message = FALSE, warning=FALSE}
 results <- read_csv("usa_poc_voyages.csv",col_types = cols())
@@ -196,5 +196,5 @@ results_processed %>%
   geom_abline(slope=1,intercept=0,lwd=1.5) +
   ylab("Observed total trip duration\n[hours]\n") +
   xlab("\nPredicted total trip duration\n[hours]") +
-  ggtitle(paste0("Predicted and observed total trip duration\nfor the US Dutch Harbor trawl fleet in 2012- 2016\nR-squared: ",signif(broom::glance(model)$r.squared,3)))
+  ggtitle(paste0("Predicted and observed total trip duration\nfor the US Dutch Harbor fleet in 2012- 2016\nR-squared: ",signif(broom::glance(model)$r.squared,3)))
 ```
