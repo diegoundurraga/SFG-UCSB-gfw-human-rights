@@ -87,16 +87,36 @@ Total combos: 78,840
 library(AlgDesign)
 
 #https://stackoverflow.com/questions/5044876/how-to-create-a-fractional-factorial-design-in-r
+#https://pdfs.semanticscholar.org/b0fb/05e51e02d4eda914888ae0590dd65b45ff9a.pdf
+# levels.design = c(177,15,2,2,3,3)
+# f.design <- gen.factorial(levels.design,center=FALSE,
+#                           varNames = c("flag","gear","transshipment","foreign_eez","time_at_sea","daily_fishing_hours"),factors="all")
+# fract.design <- optFederov(
+#         data=f.design,
+#         nTrials=sum(levels.design),
+#         approximate=TRUE)
+# 
+# saveRDS(fract.design,"fract.design_202.Rdata")
 
-levels.design = c(5,5,2,2,3,3)
-f.design <- gen.factorial(levels.design,center=FALSE)
+library(choiceDes)
+# Let's do 10 binary indicators
+levels.design = rep(2,5)
+des <- dcm.design(levels.design, 
+                  nb = 25, 
+                  sets = 50, 
+                  alts = 2)
 
-fract.design <- optFederov(
-        data=f.design,
-        nTrials=sum(levels.design),
-        approximate=TRUE)
+saveRDS(des,"blocked.fract.design.Rdata")
 
-library(DoE.base)
-fract.design <- oa.design(nlevels=levels.design)
+# Make dummy data
+design <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = sample(c(1,0), 2,TRUE))
+
+# Test model using dummy data
+library(survival)
+clogit(response ~ X1*X2*X3*X4*X5 + strata(card), data = design)
 ```
+
+
 
