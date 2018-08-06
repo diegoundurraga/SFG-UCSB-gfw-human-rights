@@ -26,3 +26,4 @@ vignettes/*.pdf
 *.Rproj
 *.DS_Store
 ~/.httr-oauth
+data/.DS_Store

@@ -79,9 +79,13 @@ master_df <- average_annual_days_df %>%
 ```{r GFWdata_plot, eval=TRUE}
 master_df %>%
   ggplot(aes(x=average_daily_hours,y=average_annual_days)) +
-  geom_point(aes(color=known_suspect)) +
-  xlab("Average daily fishing hours [hours/day]") +
-  ylab("Average annual days fishing [days/year]") +
+  geom_point(aes(color=known_suspect), size = 4) +
+  xlab("Average daily fishing hours\n[hours/day]") +
+  ylab("Average annual days fishing\n[days/year]") +
   scale_color_manual(name="Known suspect of\nhuman trafficking",values=c("gray", "red")) +
-  ggtitle("Activity of Thai Fishing Vessels using AIS\nPeriod from 2012-2016\nDate source: Global Fishing Watch")
+  theme_bw(axis.text=element_text(size=20),
+        axis.title=element_text(size=20),
+        legend.title=element_text(size=20),
+        legend.text=element_text(size=20))
+#  ggtitle("Activity of Thai Fishing Vessels using AIS\nPeriod from 2012-2016\nDate source: Global Fishing Watch")
 ```

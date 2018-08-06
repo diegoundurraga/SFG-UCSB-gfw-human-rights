@@ -1,0 +1,154 @@
+---
+title: "Forced labor expert survey design"
+output: html_notebook
+---
+
+# Setup
+
+```{r}
+library(tidyverse)
+library(bigrquery)
+project <-  "ucsb-gfw"
+```
+
+# Figure out possible combinations
+
+```{r}
+sql <-
+"
+#standardSQL
+SELECT
+best_flag,
+inferred_label,
+SUM(active_hours) active_hours
+FROM `world-fishing-827.gfw_research.vessel_info_20180726`
+WHERE
+on_fishing_list_nn
+GROUP BY
+best_flag,
+inferred_label
+ORDER BY active_hours DESC
+"
+
+# Run new query. Delete old table, upload new one
+bq_table(project = project,table = "vessel_combinations",dataset = "human_rights") %>% 
+  bq_table_delete()
+
+bq_project_query(project,sql, destination_table = bq_table(project = project,table = "vessel_combinations",dataset = "human_rights"),use_legacy_sql = FALSE, allowLargeResults = TRUE)
+```
+
+Visualize data
+
+```{r}
+sql<-"
+SELECT
+*
+FROM
+`human_rights.vessel_combinations`
+"
+vessel_combinations <- bq_project_query(project, sql) %>%
+  bq_table_download(max_results = Inf)
+
+good_gear_types <- c(
+  "trawlers",
+  "trollers",
+  "driftnets",
+  "other_seines",
+  "set_gillnets",
+  "squid_jigger",
+  "other_fishing",
+  "pole_and_line",
+  "set_longlines",
+  "dredge_fishing",
+  "pots_and_traps",
+  "tuna_purse_seines",
+  "drifting_longlines",
+  "other_purse_seines"
+)
+
+unique_vessel_combinations <- vessel_combinations %>%
+  filter(!is.na(active_hours)) %>%
+  mutate(gear = case_when(inferred_label %in% good_gear_types ~ inferred_label,
+                          TRUE ~ "unknown"),
+         flag = case_when(stringr::str_length(best_flag) == 3 ~ best_flag,
+                          TRUE ~ "unknown")) %>%
+  distinct(flag, gear)
+```
+
+1095 unique flag/gear combos
+Binary - suspected transshipment
+Binary - fishing in foreign EEZ
+Binary - port of convenience
+3 categories - time at sea (comparable to others, outlier, extreme outlier)
+3 categories - hours fishing per day (comparable to others, outlier, extreme outlier)
+Total combos: 78,840
+
+```{r}
+library(AlgDesign)
+
+#https://stackoverflow.com/questions/5044876/how-to-create-a-fractional-factorial-design-in-r
+#https://pdfs.semanticscholar.org/b0fb/05e51e02d4eda914888ae0590dd65b45ff9a.pdf
+# levels.design = c(177,15,2,2,3,3)
+# f.design <- gen.factorial(levels.design,center=FALSE,
+#                           varNames = c("flag","gear","transshipment","foreign_eez","time_at_sea","daily_fishing_hours"),factors="all")
+# fract.design <- optFederov(
+#         data=f.design,
+#         nTrials=sum(levels.design),
+#         approximate=TRUE)
+# 
+# saveRDS(fract.design,"fract.design_202.Rdata")
+
+library(choiceDes)
+# Let's do 10 binary indicators
+levels.design = rep(2,5)
+des <- dcm.design(levels.design, 
+                  nb = 25, 
+                  sets = 50, 
+                  alts = 2)
+
+saveRDS(des,"blocked.fract.design.Rdata")
+
+# Test model using dummy data
+library(survival)
+
+# Make random dummy data
+design <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = sample(c(1,0), 2,FALSE)) %>%
+  ungroup()
+
+clogit(response ~ X1 + X2 + X3 + X4 + X5 + strata(card), data = design)
+
+# Skew data to X1
+design1 <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = case_when(X1[1] == 1 & X1[2] == 2 ~ sample(c(1,0),2,FALSE,prob = c(0.7,0.3)),
+                              X1[1] == 2 & X1[1] == 1 ~ sample(c(0,1),2,FALSE,prob = c(0.3,0.7)),
+                              TRUE ~ sample(c(1,0), 2,FALSE))) %>%
+  ungroup()
+
+clogit(response ~ X1 + X2 + X3 + X4 + X5 + strata(card), data = design1)
+
+# Skew data to X2
+design2 <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = case_when(X2[1] == 1 & X2[2] == 2 ~ sample(c(1,0),2,FALSE,prob = c(0.7,0.3)),
+                              X2[1] == 2 & X2[1] == 1 ~ sample(c(0,1),2,FALSE,prob = c(0.3,0.7)),
+                              TRUE ~ sample(c(1,0), 2,FALSE))) %>%
+  ungroup()
+
+clogit(response ~ X1 + X2 + X3 + X4 + X5 + strata(card), data = design2)
+
+# Skew data to interaction of X1 and X2
+design12 <- des$levels %>%
+  group_by(card) %>%
+  mutate(response = case_when(X1[1] == 1 & X2[1] == 1 & X1[2] == 2 & X2[2] == 2 ~ sample(c(1,0),2,FALSE,prob = c(0.7,0.3)),
+                              X1[2] == 1 & X2[2] == 1 & X1[1] == 2 & X2[1] == 2 ~ sample(c(0,1),2,FALSE,prob = c(0.7,0.3)),
+                              TRUE ~ sample(c(1,0), 2,FALSE))) %>%
+  ungroup()
+
+clogit(response ~ X1*X2 + X3 + X4 + X5 + strata(card), data = design12)
+```
+
+
+

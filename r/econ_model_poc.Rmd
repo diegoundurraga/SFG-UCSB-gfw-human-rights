@@ -1,0 +1,990 @@
+---
+title: "Detecting forced labor in fisheries - Econ model Proof of Concept"
+author: Sustainable Fisheries Group, UCSB
+output: html_notebook
+---
+
+# Setup
+```{r}
+library(tidyverse)
+library(bigrquery)
+library(googledrive)
+library(lubridate)
+library(janitor)
+library(fuzzyjoin)
+project <-  "ucsb-gfw"
+```
+
+# Create relevant vessel table
+
+Let's first look at US trawlers. We do not expect to see any forced labor in this fleet.
+
+```{r}
+# First, get all relevant vessel info
+
+flag_poc <- "USA"
+gear_poc <- "trawlers"
+
+#flag_poc <- "THA"
+
+sql<-glue::glue("
+#standardSQL
+SELECT
+mmsi,
+year,
+best_flag,
+best_label,
+best_tonnage,
+best_length,
+best_engine_power
+FROM `world-fishing-827.gfw_research.vessel_info_20180726`
+WHERE
+best_flag = '{flag_poc}'
+AND on_fishing_list_nn
+# AND best_label = '{gear_poc}'")
+
+# Run new query. Delete old table, upload new one
+bq_table(project = project,table = "poc_vessel_info",dataset = "human_rights") %>% 
+  bq_table_delete()
+bq_project_query(project,sql, destination_table = bq_table(project = project,table = "poc_vessel_info",dataset = "human_rights"),use_legacy_sql = FALSE, allowLargeResults = TRUE)
+```
+
+
+# Create table of all fishing voyages between 2012-2017 for that fleet
+
+```{r}
+sql <-"
+#standardSQL
+WITH
+master AS(SELECT
+anchorages.mmsi mmsi,
+anchorages.from_anchorage_id from_anchorage_id,
+CONCAT(b.anchor_group,
+'-',
+b.label) from_anchorage_name,
+b.label from_port_name,
+anchorages.departure_timestamp departure_timestamp,
+anchorages.to_anchorage_id to_anchorage_id,
+CONCAT(c.anchor_group,
+'-',
+c.label) to_anchorage_name,
+c.label to_port_name,
+anchorages.arrival_timestamp arrival_timestamp,
+anchorages.flag flag,
+anchorages.gear gear,
+anchorages.tonnage tonnage,
+anchorages.length length,
+anchorages.engine_power engine_power
+FROM (
+SELECT
+anchor1.mmsi mmsi,
+anchor2.best_flag flag,
+anchor2.best_label gear,
+anchor2.best_tonnage tonnage,
+anchor2.best_length length,
+anchor2.best_engine_power engine_power,
+anchor2.anchorage_id from_anchorage_id,
+anchor2.event_end departure_timestamp,
+anchor1.anchorage_id to_anchorage_id,
+anchor1.event_start arrival_timestamp
+FROM (
+SELECT
+vessel_1_id mmsi,
+event_start,
+event_end,
+anchorage_id,
+ROW_NUMBER() OVER (PARTITION BY vessel_1_id ORDER BY event_start) rn
+FROM
+`world-fishing-827.gfw_research.voyage_events_all_vessels_20180307`
+WHERE
+event_type = 'anchorage'
+AND vessel_1_id IN (
+SELECT
+mmsi
+FROM
+`human_rights.poc_vessel_info`)) anchor1
+JOIN (
+SELECT
+*,
+rn+1 rn_plus
+FROM ( (
+SELECT
+vessel_1_id mmsi,
+EXTRACT(YEAR FROM event_start) AS year,
+event_start,
+event_end,
+anchorage_id,
+ROW_NUMBER() OVER (PARTITION BY vessel_1_id ORDER BY event_start) rn
+FROM
+`world-fishing-827.gfw_research.voyage_events_all_vessels_20180307`
+WHERE
+event_type = 'anchorage') voy_info
+LEFT JOIN (
+SELECT
+mmsi mmsi_info,
+year year_info,
+best_flag,
+best_label,
+best_tonnage,
+best_length,
+best_engine_power
+FROM
+`human_rights.poc_vessel_info`) ves_info
+ON
+voy_info.mmsi = ves_info.mmsi_info
+AND voy_info.year = ves_info.year_info)) anchor2
+ON
+anchor1.mmsi = anchor2.mmsi
+AND anchor1.rn = anchor2.rn_plus) anchorages
+LEFT JOIN (
+SELECT
+s2id,
+label,
+anchor_group
+FROM
+`world-fishing-827.gfw_research.named_anchorages_20171120`) b
+ON
+anchorages.from_anchorage_id = b.s2id
+LEFT JOIN (
+SELECT
+s2id,
+label,
+anchor_group
+FROM
+`world-fishing-827.gfw_research.named_anchorages_20171120`) c
+ON
+anchorages.to_anchorage_id = c.s2id
+)
+
+SELECT
+*
+FROM
+master
+WHERE
+NOT gear IS NULL
+"
+
+# Using better table
+
+sql <-"
+#standardSQL
+  WITH master AS(
+  SELECT
+    anchorages.mmsi mmsi,
+    anchorages.flag flag,
+    anchorages.gear gear,
+    anchorages.tonnage tonnage,
+    anchorages.length length,
+    anchorages.engine_power engine_power,
+    anchorages.departure_timestamp departure_timestamp,
+    anchorages.arrival_timestamp arrival_timestamp,
+    anchorages.departure_port departure_port,
+    anchorages.arrival_port arrival_port
+  FROM (
+    SELECT
+      anchor1.mmsi mmsi,
+      anchor2.best_flag flag,
+      anchor2.best_label gear,
+      anchor2.best_tonnage tonnage,
+      anchor2.best_length length,
+      anchor2.best_engine_power engine_power,
+      anchor2.port_exit_timestamp departure_timestamp,
+      anchor1.port_entry_timestamp arrival_timestamp,
+      anchor2.port departure_port,
+      anchor1.port arrival_port
+    FROM (
+      SELECT
+        vessel_id mmsi,
+        port_entry_timestamp,
+        port_exit_timestamp,
+        port_label port,
+        ROW_NUMBER() OVER (PARTITION BY vessel_id ORDER BY port_entry_timestamp) rn
+      FROM
+        `world-fishing-827.gfw_research.port_entry_exit_only_20180121`
+      WHERE
+        vessel_id IN (
+        SELECT
+          mmsi
+        FROM
+          `human_rights.poc_vessel_info`)) anchor1
+    JOIN (
+      SELECT
+        *,
+        rn+1 rn_plus
+      FROM ( (
+          SELECT
+            vessel_id mmsi,
+            EXTRACT(YEAR
+            FROM
+              port_exit_timestamp) AS year,
+            port_entry_timestamp,
+            port_exit_timestamp,
+            port_label port,
+            ROW_NUMBER() OVER (PARTITION BY vessel_id ORDER BY port_entry_timestamp) rn
+          FROM
+            `world-fishing-827.gfw_research.port_entry_exit_only_20180121`) voy_info
+        LEFT JOIN (
+          SELECT
+            mmsi mmsi_info,
+            year year_info,
+            best_flag,
+            best_label,
+            best_tonnage,
+            best_length,
+            best_engine_power
+          FROM
+            `human_rights.poc_vessel_info`) ves_info
+        ON
+          voy_info.mmsi = ves_info.mmsi_info
+          AND voy_info.year = ves_info.year_info)) anchor2
+    ON
+      anchor1.mmsi = anchor2.mmsi
+      AND anchor1.rn = anchor2.rn_plus) anchorages)
+SELECT
+  *
+FROM
+  master
+"
+  
+
+bq_table(project = project,table = "poc_voyages_with_anchorages",dataset = "human_rights") %>% 
+  bq_table_delete()
+
+bq_project_query(project,sql, destination_table = bq_table(project = project,table = "poc_voyages_with_anchorages",dataset = "human_rights"),
+                 use_legacy_sql = FALSE, allowLargeResults = TRUE)
+```
+
+# Extract all events during those voyages
+Events includes possible encounters (transshipment, bunkering, or fishing-to-fishing) and AIS coverage gaps
+
+```{r}
+sql<-"
+#standardSQL
+  WITH transshipment_ids AS(
+  SELECT
+    mmsi trans_mmsi
+  FROM
+    `ucsb-gfw.transhipment_high_seas.transshipment_vessels_20170714`),
+  bunker_ids AS(
+  SELECT
+    mmsi bunker_mmsi
+  FROM
+    `ucsb-gfw.transhipment_high_seas.fish_bunker_vessels_20170703_copy` ),
+  fishing_ids AS(
+  SELECT
+    mmsi fishing_mmsi
+  FROM
+    `world-fishing-827.gfw_research.vessel_info_20180518`
+  WHERE
+    on_fishing_list_nn ),
+  event_table AS(
+  SELECT
+    vessel_1_id,
+    vessel_2_id,
+    event_start,
+    event_end,
+    event_type
+  FROM
+    `world-fishing-827.gfw_research.voyage_events_all_vessels_20180307`
+  WHERE
+    (event_type = 'rendezvous'
+      OR event_type = 'coverage gap')
+    AND ((vessel_1_id IN (
+        SELECT
+          mmsi
+        FROM
+          `human_rights.poc_vessel_info`))
+      OR (vessel_2_id IN (
+        SELECT
+          mmsi
+        FROM
+          `human_rights.poc_vessel_info`)))),
+  voyages AS(
+  SELECT
+    mmsi,
+    departure_timestamp,
+    departure_port,
+    arrival_timestamp,
+    arrival_port
+  FROM
+    `human_rights.poc_voyages_with_anchorages`),
+  joined_table AS(
+  SELECT
+    *
+  FROM
+    event_table
+  JOIN
+    voyages
+  ON
+    (event_table.vessel_1_id = voyages.mmsi
+      OR event_table.vessel_2_id = voyages.mmsi)
+    AND event_table.event_start >voyages.departure_timestamp
+    AND event_table.event_end < voyages.arrival_timestamp),
+  joined_table2 AS(
+  SELECT
+    *,
+    (vessel_1_id IN (
+      SELECT
+        trans_mmsi
+      FROM
+        transshipment_ids)) vessel_1_trans,
+    (vessel_2_id IN (
+      SELECT
+        trans_mmsi
+      FROM
+        transshipment_ids)) vessel_2_trans,
+    (vessel_1_id IN (
+      SELECT
+        bunker_mmsi
+      FROM
+        bunker_ids)) vessel_1_bunker,
+    (vessel_2_id IN (
+      SELECT
+        bunker_mmsi
+      FROM
+        bunker_ids)) vessel_2_bunker,
+    (vessel_1_id IN (
+      SELECT
+        fishing_mmsi
+      FROM
+        fishing_ids)) vessel_1_fishing,
+    (vessel_2_id IN (
+      SELECT
+        fishing_mmsi
+      FROM
+        fishing_ids)) vessel_2_fishing
+  FROM
+    joined_table ),
+  final_event_table AS(
+  SELECT
+    mmsi,
+    departure_timestamp,
+    departure_port,
+    arrival_timestamp,
+    arrival_port,
+    (CASE
+        WHEN event_type = 'rendezvous' AND (vessel_1_trans OR vessel_2_trans) THEN 1
+        ELSE 0 END) encounter_transshipment,
+    (CASE
+        WHEN event_type = 'rendezvous' AND (vessel_1_bunker OR vessel_2_bunker) THEN 1
+        ELSE 0 END) encounter_bunker,
+    (CASE
+        WHEN event_type = 'rendezvous' AND (vessel_1_fishing AND vessel_2_fishing) THEN 1
+        ELSE 0 END) encounter_fishing,
+    (CASE
+        WHEN event_type = 'rendezvous' AND (NOT(vessel_1_fishing OR vessel_1_trans OR vessel_1_bunker) OR NOT(vessel_2_fishing OR vessel_2_trans OR vessel_2_bunker)) THEN 1
+        ELSE 0 END) encounter_unknown,
+    (CASE
+        WHEN event_type = 'coverage gap' THEN 1
+        ELSE 0 END) coverage_gap
+  FROM
+    joined_table2)
+SELECT
+  mmsi,
+  departure_timestamp,
+  departure_port,
+  arrival_timestamp,
+  arrival_port,
+  SUM(encounter_transshipment) encounters_transshipment,
+  SUM(encounter_bunker) encounters_bunker,
+  SUM(encounter_fishing) encounters_fishing,
+  SUM(encounter_unknown) encounter_unknown,
+  SUM(coverage_gap) coverage_gaps
+FROM
+  final_event_table
+GROUP BY
+  mmsi,
+  departure_timestamp,
+  departure_port,
+  arrival_timestamp,
+  arrival_port
+"
+
+bq_table(project = project,table = "poc_events",dataset = "human_rights") %>% 
+  bq_table_delete()
+
+bq_project_query(project,sql, destination_table = bq_table(project = project,table = "poc_events",dataset = "human_rights"),
+                 use_legacy_sql = FALSE, allowLargeResults = TRUE)
+```
+# Extract AIS info from those voyages
+
+```{r}
+# Get NTZ area of each EEZ
+# Data from https://www.protectedplanet.net/marine
+# Only interested in no-take area. Not interested in Anarctica
+ntzs <- read.csv("../data/WDPA_Mar2018_marine-csv/WDPA_Mar2018_marine-csv.csv",stringsAsFactors = FALSE) %>%
+  filter(NO_TAKE == "All") %>%
+  .$WDPAID %>%
+  unique()
+
+ntz_filter <- paste(paste0("regions LIKE '%mpant:",ntzs,"%'"),collapse=" OR ")
+
+sql<-glue::glue("
+#standardSQL
+  WITH ping_info AS (
+  SELECT
+    mmsi,
+    lat start_lat,
+    lon start_lon,
+    timestamp start_timestamp,
+    next_lat end_lat,
+    next_lon end_lon,
+    next_timestamp end_timestamp,
+    hours,
+    avg_distance_km,
+    eez_iso3,
+    distance_from_shore,
+    distance_from_port,
+    (CASE
+        WHEN nnet_score = 1 AND NOT (distance_from_shore < 1000 AND implied_speed < 1) THEN hours
+        ELSE 0 END) nnet_hours,
+    (CASE
+        WHEN {ntz_filter} THEN TRUE
+        ELSE FALSE END) in_ntz
+  FROM
+    `world-fishing-827.gfw_research.nn`
+  WHERE
+    lat < 90
+    AND lat > -90
+    AND lon < 180
+    AND lon >-180
+    AND _PARTITIONTIME BETWEEN TIMESTAMP('2012-01-01')
+    AND TIMESTAMP('2017-12-31')
+    AND mmsi IN (
+    SELECT
+      mmsi
+    FROM
+      `human_rights.poc_voyages_with_anchorages`)),
+  voyage_info AS(
+  SELECT
+    *
+  FROM
+    `ucsb-gfw.human_rights.poc_voyages_with_anchorages`),
+  ais_info AS(
+  SELECT
+    ping_info.mmsi mmsi,
+    voyage_info.flag flag,
+    voyage_info.gear gear,
+    voyage_info.length length,
+    voyage_info.tonnage tonnage,
+    voyage_info.engine_power engine_power,
+    DATE_TRUNC(DATE(ping_info.start_timestamp), MONTH) month,
+    DATE_TRUNC(DATE(ping_info.start_timestamp), DAY) day,
+    ping_info.start_lat start_lat,
+    ping_info.start_lon start_lon,
+    ping_info.start_timestamp start_timestamp, 
+    ping_info.hours hours,
+    ping_info.nnet_hours nnet_hours,
+    ping_info.avg_distance_km avg_distance_km,
+    ping_info.distance_from_shore distance_from_shore,
+    ping_info.distance_from_port distance_from_port,
+    voyage_info.departure_port departure_port,
+    voyage_info.departure_timestamp departure_timestamp,
+    voyage_info.arrival_port arrival_port,
+    voyage_info.arrival_timestamp arrival_timestamp,
+    (NOT ping_info.eez_iso3 IS NULL AND NOT ping_info.eez_iso3 = voyage_info.flag AND ping_info.nnet_hours > 0) fishing_foreign_eez,
+    (CASE WHEN (NOT ping_info.eez_iso3 IS NULL AND NOT ping_info.eez_iso3 = voyage_info.flag AND ping_info.nnet_hours > 0) THEN ping_info.eez_iso3 ELSE NULL END) fishing_foreign_eez_iso3,
+    (ping_info.eez_iso3 IS NULL AND ping_info.nnet_hours > 0) fishing_high_seas,
+    (ping_info.in_ntz AND ping_info.nnet_hours > 0) fishing_ntz
+  FROM
+    ping_info
+  LEFT JOIN
+    voyage_info
+  ON
+    ping_info.mmsi = voyage_info.mmsi
+    AND ping_info.start_timestamp > voyage_info.departure_timestamp
+    AND ping_info.start_timestamp < voyage_info.arrival_timestamp)
+SELECT
+  *
+FROM
+  ais_info
+"
+)
+
+bq_table(project = project,table = "poc_voyage_ais_positions",dataset = "human_rights") %>% 
+  bq_table_delete()
+bq_project_query(project,query = sql, destination_table =  bq_table(project = project,table = "poc_voyage_ais_positions",dataset = "human_rights"),
+                 use_legacy_sql = FALSE, allowLargeResults = TRUE)
+```
+
+# Grid AIS positions
+```{r}
+grid_size <- 0.5 # Grid in degrees
+suspicious_cutff <- 4 # How many standard deviations from mean does revenue/cost ratio need to be to be suspicious?
+sql <-glue::glue("
+#standardSQL
+  WITH grid_base AS(
+  SELECT
+    mmsi,
+    gear,
+    flag,
+    month,
+    length,
+    tonnage,
+    engine_power,
+    FLOOR(start_lat/{grid_size}) * {grid_size} lat_bin,
+    FLOOR(start_lon/{grid_size}) * {grid_size} lon_bin,
+    departure_port,
+    departure_timestamp,
+    DATE(departure_timestamp) departure_date,
+    arrival_port,
+    arrival_timestamp,
+    SUM(hours) hours,
+    SUM(nnet_hours) fishing_hours,
+    SUM(hours - nnet_hours) * engine_power travel_effort_kWH,
+    SUM(nnet_hours) * engine_power fishing_effort_kWH,
+    SUM(avg_distance_km) distance_km,
+    MAX(distance_from_shore) max_distance_from_shore_m,
+    MAX(distance_from_port) max_distance_from_port_m,
+    (SUM(CASE WHEN fishing_foreign_eez THEN 1 ELSE 0 END) > 0) fishing_foreign_eez,
+    (SUM(CASE WHEN fishing_high_seas THEN 1 ELSE 0 END) > 0) fishing_high_seas,
+    (SUM(CASE WHEN fishing_ntz THEN 1 ELSE 0 END) > 0) fishing_ntz
+  FROM
+    `human_rights.poc_voyage_ais_positions`
+  WHERE
+    NOT flag IS NULL
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    month,
+    length,
+    tonnage,
+    engine_power,
+    lat_bin,
+    lon_bin,
+    departure_port,
+    departure_timestamp,
+    departure_date,
+    arrival_port,
+    arrival_timestamp),
+  voyage_info AS(
+  SELECT
+    mmsi voy_mmsi,
+    gear voy_gear,
+    flag voy_flag,
+    month voy_month,
+    departure_port voy_departure_port,
+    departure_timestamp voy_departure_timestamp,
+    SUM(hours - nnet_hours) * engine_power voyage_travel_effort_kWH,
+    SUM(hours - nnet_hours) * engine_power / COUNT(*) travel_effort_per_grid_kWH,
+    SUM(nnet_hours) * engine_power voyage_fishing_effort_kWH
+  FROM
+    `human_rights.poc_voyage_ais_positions`
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    month,
+    engine_power,
+    departure_port,
+    departure_timestamp),
+  voyage_grids AS(
+  SELECT
+    *
+  FROM
+    grid_base
+  LEFT JOIN
+    voyage_info
+  ON
+    grid_base.mmsi = voyage_info.voy_mmsi
+    AND grid_base.gear = voyage_info.voy_gear
+    AND grid_base.flag = voyage_info.voy_flag
+    AND grid_base.month = voyage_info.voy_month
+    AND grid_base.departure_port = voyage_info.voy_departure_port
+    AND grid_base.departure_timestamp = voyage_info.voy_departure_timestamp),
+  voyage_grids_2 AS(
+  SELECT
+    *
+    EXCEPT(voy_mmsi, voy_gear, voy_flag, voy_month, voy_departure_port,voy_departure_timestamp),
+    (CASE WHEN fishing_effort_kWH >0 THEN fishing_effort_kWH / (travel_effort_per_grid_kWH + fishing_effort_kWH)
+      ELSE NULL
+      END) revenue_cost_ratio
+  FROM
+    voyage_grids),
+  summary_grids AS(
+  SELECT
+    flag sum_flag,
+    gear sum_gear,
+    month sum_month,
+    lat_bin sum_lat_bin,
+    lon_bin sum_lon_bin,
+    AVG(revenue_cost_ratio) mean_revenue_cost_ratio,
+    STDDEV(revenue_cost_ratio) sd_revenue_cost_ratio
+  FROM
+    voyage_grids_2
+  GROUP BY
+    sum_flag,
+    sum_gear,
+    sum_month,
+    sum_lat_bin,
+    sum_lon_bin)
+SELECT
+  *
+  EXCEPT(sum_flag, sum_gear, sum_month,sum_lat_bin,sum_lon_bin),
+  (revenue_cost_ratio < mean_revenue_cost_ratio - {suspicious_cutff} * sd_revenue_cost_ratio) suspicious_econ
+FROM
+  voyage_grids_2
+LEFT JOIN
+  summary_grids
+ON
+  voyage_grids_2.flag = summary_grids.sum_flag
+  AND voyage_grids_2.gear = summary_grids.sum_gear
+  AND voyage_grids_2.month = summary_grids.sum_month
+  AND voyage_grids_2.lat_bin = summary_grids.sum_lat_bin
+  AND voyage_grids_2.lon_bin = summary_grids.sum_lon_bin
+  ")
+bq_table(project = project,table = "poc_voyages_gridded",dataset = "human_rights") %>% 
+  bq_table_delete()
+bq_project_query(project,query = sql, destination_table = bq_table(project = project,table = "poc_voyages_gridded",dataset = "human_rights"),
+                 allowLargeResults = TRUE)
+```
+
+# Create voyage-level summaries
+```{r}
+sql<-glue::glue("
+#standardSQL
+  WITH main_voyage AS(
+  SELECT
+    mmsi,
+    gear,
+    flag,
+    length,
+    tonnage,
+    engine_power,
+    EXTRACT(YEAR
+    FROM
+      departure_timestamp) AS year,
+    departure_port,
+    departure_timestamp,
+    departure_date,
+    arrival_port,
+    arrival_timestamp,
+    SUM(hours) time_at_sea_hours,
+    SUM(fishing_hours) fishing_hours,
+    SUM(distance_km) distance_traveled_km,
+    MAX(max_distance_from_shore_m) max_distance_from_shore_m,
+    MAX(max_distance_from_port_m) max_distance_from_port_m,
+    (SUM(CASE
+          WHEN fishing_foreign_eez THEN 1
+          ELSE 0 END) > 0) fishing_foreign_eez,
+    (SUM(CASE
+          WHEN fishing_high_seas THEN 1
+          ELSE 0 END) > 0) fishing_high_seas,
+    (SUM(CASE
+          WHEN fishing_ntz THEN 1
+          ELSE 0 END) > 0) fishing_ntz,
+    (SUM(CASE
+          WHEN suspicious_econ THEN 1
+          ELSE 0 END)) / COUNT(*) fraction_suspicious_econ
+  FROM
+    `human_rights.poc_voyages_gridded`
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    length,
+    tonnage,
+    engine_power,
+    departure_port,
+    departure_timestamp,
+    departure_date,
+    arrival_port,
+    arrival_timestamp),
+  daily_fishing AS(
+  SELECT
+    mmsi,
+    gear,
+    flag,
+    departure_port,
+    departure_timestamp,
+    (CASE
+        WHEN SUM(hours) = 0 THEN NULL
+        ELSE SUM(hours) END) daily_hours,
+    day
+  FROM
+    `human_rights.poc_voyage_ais_positions`
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    departure_port,
+    departure_timestamp,
+    day),
+  daily_fishing_sum AS(
+  SELECT
+    mmsi sum_mmsi,
+    gear sum_gear,
+    flag sum_flag,
+    departure_port sum_departure_port,
+    departure_timestamp sum_departure_timestamp,
+    AVG(daily_hours) mean_daily_fishing_hours
+  FROM
+    daily_fishing
+  GROUP BY
+    mmsi,
+    gear,
+    flag,
+    departure_port,
+    departure_timestamp),
+  main_voyage2 AS(
+  SELECT
+    * EXCEPT(sum_mmsi,
+      sum_gear,
+      sum_flag,
+      sum_departure_port,
+      sum_departure_timestamp)
+  FROM
+    main_voyage
+  LEFT JOIN
+    daily_fishing_sum
+  ON
+    main_voyage.mmsi = daily_fishing_sum.sum_mmsi
+    AND main_voyage.gear = daily_fishing_sum.sum_gear
+    AND main_voyage.flag = daily_fishing_sum.sum_flag
+    AND main_voyage.departure_port = daily_fishing_sum.sum_departure_port
+    AND main_voyage.departure_timestamp = daily_fishing_sum.sum_departure_timestamp),
+  summary_voyages AS(
+  SELECT
+    flag sum2_flag,
+    gear sum2_gear,
+    year sum2_year,
+    departure_port sum2_departure_port,
+    arrival_port sum2_arrival_port,
+    AVG(time_at_sea_hours) mean_time_at_sea_hours,
+    STDDEV(time_at_sea_hours) sd_time_at_sea_hours,
+    AVG(fishing_hours) mean_fishing_hours,
+    STDDEV(fishing_hours) sd_fishing_hours,
+    AVG(distance_traveled_km) mean_distance_traveled_km,
+    STDDEV(distance_traveled_km) sd_distance_traveled_km,
+    AVG(mean_daily_fishing_hours) mean_mean_daily_fishing_hours,
+    STDDEV(mean_daily_fishing_hours) sd_mean_daily_fishing_hours
+  FROM
+    main_voyage2
+  GROUP BY
+    sum2_flag,
+    sum2_gear,
+    sum2_year,
+    sum2_departure_port,
+    sum2_arrival_port),
+  event_table AS(
+  SELECT
+    mmsi events_mmsi,
+    departure_timestamp events_departure_timestamp,
+    departure_port events_departure_port,
+    arrival_timestamp events_arrival_timestamp,
+    arrival_port events_arrival_port,
+    encounters_transshipment,
+    encounters_bunker,
+    encounters_fishing,
+    coverage_gaps
+  FROM
+    `human_rights.poc_events` ),
+  penultimate AS (
+  SELECT
+    * EXCEPT(sum2_gear,
+      sum2_flag,
+      sum2_year,
+      sum2_departure_port,
+      sum2_arrival_port,
+      mean_time_at_sea_hours,
+      sd_time_at_sea_hours,
+      mean_fishing_hours,
+      sd_fishing_hours,
+      mean_distance_traveled_km,
+      sd_distance_traveled_km,
+      mean_mean_daily_fishing_hours,
+      sd_mean_daily_fishing_hours,
+      events_mmsi,
+      events_departure_timestamp,
+      events_departure_port,
+      events_arrival_timestamp,
+      events_arrival_port),
+    (time_at_sea_hours > mean_time_at_sea_hours + {suspicious_cutff} * sd_time_at_sea_hours) suspicious_time_at_sea_hours,
+    (fishing_hours > mean_fishing_hours + {suspicious_cutff} * sd_fishing_hours) suspicious_fishing_hours,
+    (distance_traveled_km > mean_distance_traveled_km + {suspicious_cutff} * sd_distance_traveled_km) suspicious_distance_traveled_km,
+    (mean_daily_fishing_hours > mean_mean_daily_fishing_hours + {suspicious_cutff} * sd_mean_daily_fishing_hours) suspicious_mean_daily_fishing_hours,
+    encounters_transshipment >0 suspicious_encounters_transshipment,
+    encounters_bunker >0 suspicious_encounters_bunker,
+    encounters_fishing >0 suspicious_encounters_fishing,
+    coverage_gaps >0 suspicious_coverage_gaps
+  FROM
+    main_voyage2
+  LEFT JOIN
+    summary_voyages
+  ON
+    main_voyage2.gear = summary_voyages.sum2_gear
+    AND main_voyage2.flag = summary_voyages.sum2_flag
+    AND main_voyage2.year = summary_voyages.sum2_year
+    AND main_voyage2.departure_port = summary_voyages.sum2_departure_port
+    AND main_voyage2.arrival_port = summary_voyages.sum2_arrival_port
+  LEFT JOIN
+    event_table
+  ON
+    main_voyage2.mmsi = event_table.events_mmsi
+    AND main_voyage2.departure_timestamp = event_table.events_departure_timestamp
+    AND main_voyage2.departure_port = event_table.events_departure_port
+    AND main_voyage2.arrival_timestamp = event_table.events_arrival_timestamp
+    AND main_voyage2.arrival_port = event_table.events_arrival_port),
+  penultimate2 AS(
+  SELECT
+    mmsi,
+    gear,
+    flag,
+    length,
+    tonnage,
+    engine_power,
+    year,
+    departure_port,
+    departure_date,
+    departure_timestamp,
+    arrival_port,
+    arrival_timestamp,
+    time_at_sea_hours,
+    fishing_hours,
+    distance_traveled_km,
+    max_distance_from_shore_m,
+    max_distance_from_port_m,
+    mean_daily_fishing_hours,
+    fraction_suspicious_econ,
+    encounters_transshipment,
+    encounters_bunker,
+    encounters_fishing,
+    coverage_gaps,
+    (CASE
+        WHEN fishing_foreign_eez THEN 1
+        ELSE 0 END) fishing_foreign_eez,
+    (CASE
+        WHEN fishing_high_seas THEN 1
+        ELSE 0 END) fishing_high_seas,
+    (CASE
+        WHEN fishing_ntz THEN 1
+        ELSE 0 END) fishing_ntz,
+    (CASE
+        WHEN fraction_suspicious_econ > 0 THEN 1
+        ELSE 0 END) suspicious_econ,
+    (CASE
+        WHEN suspicious_fishing_hours THEN 1
+        ELSE 0 END) suspicious_fishing_hours,
+    (CASE
+        WHEN suspicious_time_at_sea_hours THEN 1
+        ELSE 0 END) suspicious_time_at_sea_hours,
+    (CASE
+        WHEN suspicious_distance_traveled_km THEN 1
+        ELSE 0 END) suspicious_distance_traveled_km,
+    (CASE
+        WHEN suspicious_mean_daily_fishing_hours THEN 1
+        ELSE 0 END) suspicious_mean_daily_fishing_hours,
+    (CASE
+        WHEN suspicious_encounters_transshipment THEN 1
+        ELSE 0 END) suspicious_encounters_transshipment,
+    (CASE
+        WHEN suspicious_encounters_bunker THEN 1
+        ELSE 0 END) suspicious_encounters_bunker,
+    (CASE
+        WHEN suspicious_encounters_fishing THEN 1
+        ELSE 0 END) suspicious_encounters_fishing,
+    (CASE
+        WHEN suspicious_coverage_gaps THEN 1
+        ELSE 0 END) suspicious_coverage_gaps
+  FROM
+    penultimate)
+SELECT
+  *,
+  (fishing_foreign_eez + fishing_high_seas + fishing_ntz + suspicious_econ + suspicious_fishing_hours + suspicious_time_at_sea_hours + suspicious_distance_traveled_km + suspicious_mean_daily_fishing_hours + suspicious_encounters_transshipment + suspicious_encounters_bunker + suspicious_encounters_fishing + suspicious_coverage_gaps) risk_score
+FROM
+  penultimate2
+ORDER BY risk_score DESC")
+
+bq_table(project = project,table = "poc_voyages",dataset = "human_rights") %>% 
+  bq_table_delete()
+bq_project_query(project,query = sql, destination_table = bq_table(project = project,table = "poc_voyages",dataset = "human_rights"),
+                 allowLargeResults = TRUE)
+
+```
+
+```{r}
+sql<-"
+SELECT
+*
+FROM
+`human_rights.poc_voyages`
+"
+results <- bq_project_query(project, sql) %>%
+  bq_table_download(max_results = Inf)
+
+#write_csv(results, "thai_poc_voyages.csv")
+#write_csv(results, "taiwan_poc_voyages.csv")
+write_csv(results, "usa_poc_voyages.csv")
+
+#results <- read_csv("thai_poc_voyages.csv")
+#results <- read_csv("taiwan_poc_voyages.csv")
+results <- read_csv("usa_poc_voyages.csv")
+
+#country <- "Thailand"
+#country <- "Taiwan"
+country <- "United States"
+temp_file_name = tempfile(fileext=".csv")
+drive_download(file="Forced Labor Vessel Database",path=temp_file_name,overwrite=TRUE)
+vessel_database <- read_csv(temp_file_name) %>%
+  clean_names()
+
+write_csv(vessel_database, "vessel_database.csv")
+vessel_database <- read_csv("vessel_database.csv")
+risky_mmsi <- vessel_database %>% 
+  filter((flag_vessel_flies == country | owner_flag == country) & (known_offender == 1 | possible_offender==1))  %>%
+  mutate(known_offender = 1,
+         mmsi = as.numeric(mmsi),
+         year = str_extract(date_range_end,"[0-9]{4}") %>%
+           as.numeric()) %>% 
+  dplyr::select(mmsi,known_offender,year,gears_used)%>%
+  filter(!is.na(mmsi))
+
+results_processed <- results %>%
+  fuzzy_left_join(risky_mmsi,
+                  by=c("mmsi" = "mmsi","year" = "year"),
+                  match_fun = list(`==`, `<`)) %>%
+  mutate(known_offender = case_when(known_offender == 1 ~ "Yes",
+                                    TRUE ~ "No"),
+         month = lubridate::month(departure_date),
+         departure_country = str_sub(departure_port, start= -3),
+         arrival_country = str_sub(arrival_port, start= -3),
+         travel_hours = time_at_sea_hours - fishing_hours,
+         departure_country_foreign = ifelse(departure_country=="THA",1,0),
+         arrival_country_foreign = ifelse(arrival_country=="THA",1,0)) %>%
+  rename(mmsi = mmsi.x,
+         year = year.x) %>%
+  filter(fishing_hours > 0)
+
+# Train the model using only "clean" boats
+training_data <- results_processed %>%
+              filter(known_offender != "Yes")
+
+model <- lm(max_distance_from_port_m ~ length + tonnage + engine_power + factor(gear) + factor(year) + factor(month),data = training_data)
+
+results_processed <- cbind(results_processed,predict(model,interval="confidence",level=0.997,newdata = results_processed)) %>%
+  mutate(Outlier = case_when(time_at_sea_hours > upr ~ "Yes",
+                             TRUE ~ "No"))
+
+results_processed %>%
+  arrange(known_offender) %>%
+  mutate(`Known\nAbuses`=factor(known_offender)) %>%
+  ggplot(aes(x=fit,y=max_distance_from_port_m)) +
+  geom_point(aes(fill = `Known\nAbuses`),shape=21,size=3,alpha=0.8) +
+  viridis::scale_fill_viridis(discrete = TRUE,option = "C",begin = 0.15,end =0.9) +
+  #scale_shape_manual(values=c(21,25)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        plot.title = element_text(size=15),
+        axis.title.x = element_text(size=15),
+        axis.title.y = element_text(size=15),
+        axis.text.x = element_text(size=15),
+        axis.text.y = element_text(size=15),
+        legend.text=element_text(size=15),
+        legend.title=element_text(size=15))+
+  geom_ribbon(aes(ymin=lwr,ymax=upr),alpha=0.25)+ 
+  geom_abline(slope=1,intercept=0,lwd=1.5) +
+  ylab("Observed maximum distance from port\n[m]\n") +
+  xlab("\nPredicted maximum distance from port\n[m]")
+```

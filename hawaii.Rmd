@@ -1,0 +1,110 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r load_tidy_data}
+library(tidyverse)
+library(lubridate)
+library(readr)
+library(bigrquery)
+noaa_vessel_data <- read_csv("data-hawaii/HILLE_current_4Aug17.csv")
+wcpfc_vessel_data <- read_csv("data-hawaii/RFV_database_export.csv")
+
+vessel_data <- noaa_vessel_data %>%
+  mutate(vessel = VESSEL,
+    vessel_match = sub("\\.", "",tolower(VESSEL))) %>%
+  left_join(wcpfc_vessel_data %>%
+              mutate(vessel_match = sub("\\.", "",tolower(`Vessel Name`))),
+            by=c("vessel_match")) %>%
+  dplyr::select(vessel = VESSEL,
+                length = VSL_LENGTH,
+                crew = Crew,
+                tonnage = Tonnage,
+                tonnage_units = `Tonnage Type`,
+                engine_power = `Engine Power`,
+                power_units = `Power Units`,
+                imo = `IMO-LR`,
+                noaa_callsign = VSL_CALLSIGN,
+                wcpfc_callsign = IRCS) %>%
+  mutate(length_units = "ft")
+
+write_csv(vessel_data,path="data-hawaii/vessel_data.csv")
+
+vessel_data <- read_csv("data-hawaii/vessel_data_manual.csv") %>%
+  mutate(tonnage = ifelse(is.na(manual_override),tonnage,tonnage_manual),
+         tonnage_units = ifelse(is.na(manual_override),tonnage_units,tonnage_manual_units),
+         length = ifelse(is.na(manual_override),length,length_manual),
+         length_units = ifelse(is.na(manual_override),length_units,length_manual_units)) %>%
+  dplyr::select(vessel,
+         callsign = noaa_callsign,
+         mmsi = mmsi_manual,
+         length,
+         length_units,
+         tonnage,
+         length_units,
+         power=engine_power,
+         power_units,
+         crew)
+
+write_csv(vessel_data,path="data-hawaii/vessel_data.csv")
+```
+
+```{r query_gfw}
+# Only query if desired. Otherwise, load pre-saved data
+query_toggle <- "no" # yes or not
+if (query_toggle == "yes"){
+  vessel_list <- vessel_data %>%
+    filter(!is.na(mmsi)) %>%
+    .$mmsi %>%
+    paste(collapse=",")
+           
+  sql<-paste0("
+Select 
+  mmsi,
+  DATE(timestamp) date,
+  SUM(hours) hours_moving,
+  SUM(avg_distance_km) distance_traveled,
+  SUM(CASE WHEN nnet_score = 1 AND NOT (distance_from_shore < 1000 AND implied_speed < 1)
+    THEN hours
+    ELSE 0
+    END) hours_fishing,
+FROM
+  [world-fishing-827:gfw_research.nn]
+WHERE
+  mmsi IN (",vessel_list,")
+GROUP BY
+  mmsi,
+  date
+")
+  
+project <-  "ucsb-gfw"
+gfw_hawaii_data <- query_exec(sql,project,max_pages = Inf)
+
+save(gfw_hawaii_data,file="data-hawaii/gfw_hawaii_data.Rdata")
+}
+
+if (query_toggle == "no") {
+  load(file="data-hawaii/gfw_hawaii_data.Rdata")
+}
+```
+
+```{r plot_data}
+gfw_hawaii_data %>%
+  mutate(date = ymd(date),
+         year = year(date),
+         month = ymd(paste(year,month(date),15,sep="-"))) %>%
+  #filter(mmsi == 367363390) %>% # Sea Queen II
+  group_by(date) %>%
+  summarize(distinct_mmsi = n_distinct(mmsi),
+            hours_moving = sum(hours_moving),
+            distance_traveled = sum(distance_traveled),
+            hours_fishing = sum(hours_fishing)) %>%
+  gather(indicator,value,distinct_mmsi:hours_fishing) %>%
+  ggplot(aes(x=date,y=value)) +
+  geom_line() +
+    facet_wrap(~indicator,scales="free")
+```
+
+
+
