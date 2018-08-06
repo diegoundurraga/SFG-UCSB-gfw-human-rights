@@ -1,7 +1,7 @@
 ---
 title: "Forced Labor Economic Model"
 author: "Sustainable Fisheries Group, UCSB"
-date: "August 3, 2018"
+date: "August 6, 2018"
 output:
   pdf_document: default
   html_notebook: default
@@ -10,49 +10,50 @@ output:
 * Identify vessels that routinely behave in a way that indicates lower labor cost than other similar vessels
 
 # Assumptions
-* For similar vessels (flag, gear, engine power, length, and tonnage) in a given time period (monthly), the fishery shares a common stock
+* For vessels in the same fishery (flag and gear) and in a given time period (monthly), the fishery shares a common stock.
 * Individual vessels are profit maximizing, but for a given fishery and time period all points globally have a spatially uniform profitability. Points close to port will have smaller levels of the stock, but are less costly to travel to. Points further away from port will have higher levels of the stock, but are more costly to travel to.
 * Based on certain vessel characteristics (flag, gear, engine power, length, and tonnage), vessel operators will travel an optimum distance from port to give them the same profitability as other vessels in the fishery.
 * All similar vessels have the same variable labor cost, variable fuel cost, and variable subsidy benefits when not employing forced labor. These variable costs and benefits are assumed to be linearly proportional to both travel distance and fishing effort.
-* Vessels employing forced labor will have lower variable labor costs
+* Vessels employing forced labor will have lower variable labor costs.
 
 
 # Equations
 
-Revenue for a given fishing area, $R_i$ is given as follows, where $q$ is catchability, $B_i$ is the biomass in each area fished, $\overline{E}$ is the total fishing effort across the fishing area, and $p$ is price.
+Average revenue for a given fishing area, $\overline{R_i}$ is given as follows, where $q$ is catchability, $B_i$ is the biomass in each area fished, $\overline{E_i}$ is the average fishing effort in the fishing area, and $p$ is price.
 
-$$R_i = q B_i \overline{E} p$$
+$$\overline{R_i} = q B_i \overline{E_i} p$$
 
-Cost for a given fishing area, $C_i$, is given as follows, where $T_i$ is the travel distance from port to reach fishing ground $i$, $c_{fuel}$ is the variable fuel cost, $c_{labor}$ is the variable labor cost, and $s$ is the variable subsidy cost: 
+Average cost for a given fishing area, $\overline{C_i}$, is given as follows, where $T_i$ is the travel distance from port to reach fishing are $i$, $c_{fuel}$ is the variable fuel cost, $c_{labor}$ is the variable labor cost, and $s$ is the variable subsidy benefit: 
 
-$$C_i = (T_i + \overline{E})(c_{fuel} + c_{labor} - s)$$
+$$\overline{C_i} = (T_i + \overline{E_i})(c_{fuel} + c_{labor} - s)$$
 
-Combining the equations for $R_i$ and $C_i$, get we the  profit equation:
+Combining the equations for $\overline{R_i}$ and $\overline{C_i}$, we get the average profit equation in each fishing area:
 
-$$ \Pi_i =  q B_i \overline{E} p -  (T_i + \overline{E})(c_{fuel} + c_{labor} - s)$$
+$$\overline{\Pi_i} =  q B_i \overline{E_i} p -  (T_i + \overline{E_i})(c_{fuel} + c_{labor} - s)$$
 
 Solving for $B_i$ yields the following:
 
-$$B_i = \frac{\Pi_i + (T_i + \overline{E})(c_{fuel} + c_{labor} - s)}{q   \overline{E} p} $$
+$$B_i = \frac{\overline{\Pi_i} + (T_i + \overline{E_i})(c_{fuel} + c_{labor} - s)}{q   \overline{E_i} p} $$
 
-This demonstrates that biomass will be higher in areas further from port. Next, we denote $\widetilde{\Pi}$ as the profit of vessels using forced labor. We can therefore write the following equation, where $\tilde{c_{labor}}$ is the cost of forced labor, which will be lower than $c_{labor}$.
+This demonstrates that biomass will be higher in areas further from port ($B_i$ increases as $T_i$ increases). Next, we denote $\widetilde{\Pi_i}$ as the profit of vessels using forced labor. We can therefore write the following equation, where $\tilde{c_{labor}}$ is the cost of forced labor, which will be lower than $c_{labor}$.
 
-$$ \widetilde{\Pi} =  q B_i \overline{E} p -  (T_i + \overline{E})(c_{fuel} + \tilde{c_{labor}} - s)$$
+$$ \widetilde{\Pi_i} =  q B_i \overline{E_i} p -  (T_i + \overline{E_i})(c_{fuel} + \tilde{c_{labor}} - s)$$
 
 Next, we can plug in $B_i$ to this equation:
 
-$$ \widetilde{\Pi_i} =  q \overline{E} p \left(\frac{\Pi_i + (T_i + \overline{E})(c_{fuel} + c_{labor} - s)}{q   \overline{E} p}\right)-  (T_i + \overline{E})(c_{fuel} + \tilde{c_{labor}} - s)$$
+$$ \widetilde{\Pi_i} =  q \overline{E_i} p \left(\frac{\overline{\Pi_i} + (T_i + \overline{E_i})(c_{fuel} + c_{labor} - s)}{q   \overline{E_i} p}\right)-  (T_i + \overline{E_i})(c_{fuel} + \tilde{c_{labor}} - s)$$
 
 Which simplifies as follows:
 
-$$ \widetilde{\Pi_i} =  \overline{\Pi} + (T_i + \overline{E})(c_{labor} - \tilde{c_{labor}})$$
+$$ \widetilde{\Pi_i} =  \overline{\Pi_i} + (T_i + \overline{E_i})(c_{labor} - \tilde{c_{labor}})$$
 Since $c_{labor}$ will always be greater than $\tilde{c_{labor}}$, and vessels are assumed to be profit maximizing, vessels using forced labor will therefore maximize their distance from port $T_i$.
 
 # Examples
 
-We use the following linear regression to predict total trip duration as a function of vessel characteristics:
+We use the following linear regression to predict maximum distance from port as a function of vessel characteristics:
 
-$$max\_dist\_from\_port \sim length + tonnage + engine\_power + factor(gear) + factor(year) + factor(month)$$
+$$max\_dist\_from\_port \sim length + tonnage + engine\_power + $$
+$$factor(flag) + factor(gear) + factor(year) + factor(month)$$
 
 ## Thailand
 
